@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 from keyboards import BTN_ADD
-from services import items, storage
+from services import items, scheduler, storage
 
 router = Router()
 
@@ -219,11 +219,11 @@ async def minute_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     event_dt = date.fromisoformat(data["date"])
     event_time = time(data["hour"], minute)
-    await items.add_item("event", data["title"], date=event_dt, time=event_time)
+    item = await items.add_item("event", data["title"], date=event_dt, time=event_time)
     await state.clear()
+    await scheduler.schedule_reminder_for(item)
     await callback.message.edit_text(
         f"✅ Подія додана: {utils.esc(data['title'])} — "
         f"{utils.fmt_date(event_dt)} {utils.fmt_time(event_time)}"
     )
     await callback.answer()
-    # TODO (Крок scheduler): поставити нагадування за 1 годину до події

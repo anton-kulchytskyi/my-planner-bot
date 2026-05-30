@@ -16,7 +16,7 @@ import config
 import database
 from handlers import setup_routers
 from keyboards import main_keyboard
-from services import storage
+from services import scheduler, storage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +77,8 @@ async def main() -> None:
     dp.include_router(start_router)
     setup_routers(dp)
     dp.include_router(fallback_router)  # catch-all — реєструється останнім
+
+    await scheduler.setup(bot)
 
     logger.info("Бот запускається (polling)...")
     await bot.delete_webhook(drop_pending_updates=True)

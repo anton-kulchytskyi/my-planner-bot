@@ -91,6 +91,19 @@ async def get_open_tasks(today: date_) -> list[Item]:
         return list(result.scalars().all())
 
 
+async def get_events_with_time_from(day: date_) -> list[Item]:
+    """Події з часом, дата яких >= day (для відновлення нагадувань)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Item).where(
+                Item.type == "event",
+                Item.time.is_not(None),
+                Item.date >= day,
+            )
+        )
+        return list(result.scalars().all())
+
+
 async def mark_done(item_id: int) -> bool:
     async with async_session() as session:
         item = await session.get(Item, item_id)
