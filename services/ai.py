@@ -5,6 +5,7 @@ create_item (створення), close_task / delete_item (з підтверд�
 """
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date as date_cls, timedelta
 
@@ -17,9 +18,12 @@ from services import clock, items, scheduler
 
 logger = logging.getLogger("planner-bot")
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 1024
 MAX_ITERATIONS = 6  # запобіжник від runaway tool-loop
+
+MAX_HISTORY = 10          # повідомлень (≈5 обмінів) тримаємо в контексті
+HISTORY_TTL = 30 * 60     # секунд тиші до авто-скидання
 
 _client: AsyncAnthropic | None = (
     AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
@@ -35,6 +39,33 @@ class AgentReply:
     """Відповідь агента: або текст, або запит на підтвердження дії."""
     text: str | None = None
     confirm: dict | None = None  # {"action": "close"|"delete", "id": int, "title": str}
+
+
+# --- Коротка історія розмови (in-memory, для фоллоу-апів) -----------------
+
+_sessions: dict[int, dict] = {}  # user_id -> {"messages": [...], "ts": monotonic}
+
+
+def _get_history(user_id: int) -> list[dict]:
+    session = _sessions.get(user_id)
+    if session is None:
+        return []
+    if time.monotonic() - session["ts"] > HISTORY_TTL:
+        _sessions.pop(user_id, None)
+        return []
+    return session["messages"]
+
+
+def _save_turn(user_id: int, user_text: str, assistant_text: str) -> None:
+    session = _sessions.setdefault(user_id, {"messages": [], "ts": 0.0})
+    session["messages"].append({"role": "user", "content": user_text})
+    session["messages"].append({"role": "assistant", "content": assistant_text})
+    session["messages"] = session["messages"][-MAX_HISTORY:]  # парами -> зріз з role=user
+    session["ts"] = time.monotonic()
+
+
+def reset(user_id: int) -> None:
+    _sessions.pop(user_id, None)
 
 
 # --- Інструменти ---------------------------------------------------------
@@ -246,10 +277,10 @@ def _text_of(response) -> str:
     return "".join(block.text for block in response.content if block.type == "text")
 
 
-async def respond(text: str) -> AgentReply:
+async def respond(user_id: int, text: str) -> AgentReply:
     """Агентний цикл. Повертає текст або запит на підтвердження деструктивної дії."""
     system = await _system_prompt()
-    messages: list[dict] = [{"role": "user", "content": text}]
+    messages: list[dict] = list(_get_history(user_id)) + [{"role": "user", "content": text}]
 
     for _ in range(MAX_ITERATIONS):
         response = await _client.messages.create(
@@ -261,7 +292,9 @@ async def respond(text: str) -> AgentReply:
         )
 
         if response.stop_reason != "tool_use":
-            return AgentReply(text=_text_of(response))
+            final = _text_of(response)
+            _save_turn(user_id, text, final)
+            return AgentReply(text=final)
 
         messages.append({"role": "assistant", "content": response.content})
         tool_results = []

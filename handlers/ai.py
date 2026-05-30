@@ -7,6 +7,7 @@ import logging
 import utils
 from aiogram import F, Router
 from aiogram.enums import ChatAction
+from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -35,6 +36,12 @@ def _confirm_keyboard(action: str, item_id: int) -> InlineKeyboardMarkup:
     )
 
 
+@router.message(Command("reset"))
+async def reset_session(message: Message) -> None:
+    ai.reset(message.from_user.id)
+    await message.answer("Контекст розмови очищено 🧹")
+
+
 @router.message()
 async def free_text(message: Message) -> None:
     if not ai.enabled():
@@ -48,7 +55,7 @@ async def free_text(message: Message) -> None:
 
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     try:
-        reply = await ai.respond(text)
+        reply = await ai.respond(message.from_user.id, text)
     except Exception:
         logger.exception("AI respond failed")
         await message.answer(AI_ERROR)

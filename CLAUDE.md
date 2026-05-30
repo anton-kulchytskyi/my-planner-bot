@@ -125,6 +125,7 @@ planner-bot/
 BOT_TOKEN=
 ALLOWED_USER_ID=
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/planner
+ANTHROPIC_API_KEY=   # опційно — AI-асистент
 ```
 
 ---
@@ -139,5 +140,10 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/planner
 - Крок 5: «Сьогодні» + «Найближче»
 - Крок 6: «Виконано»
 - Крок 7: Scheduler — ранковий briefing, нагадування за 1 год до події, «Налаштування»
+
+**AI-асистент (Sonnet 4.6):** вільний текст → `services/ai.py` (агентний tool-use:
+`list_items` / `create_item` / `close_task` / `delete_item`). Створення — автономне зі
+зведенням; закриття/видалення — інлайн-підтвердження. Коротка in-memory історія + `/reset`.
+Опційний: без `ANTHROPIC_API_KEY` бот працює як раніше («не розумію»).
 
 **Деплой:** push у GitHub → Railway авто-деплой. Міграції застосовуються автоматично через `entrypoint.sh` перед стартом бота.
