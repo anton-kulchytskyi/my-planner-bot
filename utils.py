@@ -39,3 +39,34 @@ def fmt_date(value: date) -> str:
 
 def fmt_time(value: time) -> str:
     return value.strftime("%H:%M")
+
+
+_MONTHS_GEN = {
+    1: "січня", 2: "лютого", 3: "березня", 4: "квітня",
+    5: "травня", 6: "червня", 7: "липня", 8: "серпня",
+    9: "вересня", 10: "жовтня", 11: "листопада", 12: "грудня",
+}
+
+
+def human_date(value: date) -> str:
+    """23 травня"""
+    return f"{value.day} {_MONTHS_GEN[value.month]}"
+
+
+def _days_word(n: int) -> str:
+    n = abs(n)
+    if 11 <= n % 100 <= 14:
+        return "днів"
+    last = n % 10
+    if last == 1:
+        return "день"
+    if 2 <= last <= 4:
+        return "дні"
+    return "днів"
+
+
+def days_ago(delta: int) -> str:
+    """1 -> 'вчора', 3 -> '3 дні тому'"""
+    if delta == 1:
+        return "вчора"
+    return f"{delta} {_days_word(delta)} тому"
