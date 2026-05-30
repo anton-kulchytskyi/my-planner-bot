@@ -23,3 +23,6 @@ ALLOWED_USER_ID: int = int(_require("ALLOWED_USER_ID"))
 
 DATABASE_URL: str = _require("DATABASE_URL")
 DATABASE_URL_ASYNC: str = _normalize_db_url(DATABASE_URL)
+
+# Опційно: без ключа AI-асистент вимкнений, бот працює як раніше.
+ANTHROPIC_API_KEY: str | None = os.environ.get("ANTHROPIC_API_KEY")

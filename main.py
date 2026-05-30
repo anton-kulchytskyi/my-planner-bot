@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 import config
 import database
-from handlers import setup_routers
+from handlers import ai as ai_handler, setup_routers
 from keyboards import main_keyboard
 from services import scheduler, storage
 
@@ -25,7 +25,6 @@ logging.basicConfig(
 logger = logging.getLogger("planner-bot")
 
 start_router = Router()
-fallback_router = Router()
 
 
 async def allowed_user_middleware(
@@ -49,14 +48,6 @@ async def cmd_start(message: Message) -> None:
     )
 
 
-@fallback_router.message()
-async def fallback(message: Message) -> None:
-    await message.answer(
-        "Не розумію 🤔 Скористайся кнопками меню або /help.",
-        reply_markup=main_keyboard(),
-    )
-
-
 async def init_db() -> None:
     """Перевіряє з'єднання з БД і засіває дефолтні налаштування."""
     async with database.engine.connect() as conn:
@@ -76,7 +67,7 @@ async def main() -> None:
     dp.update.outer_middleware(allowed_user_middleware)
     dp.include_router(start_router)
     setup_routers(dp)
-    dp.include_router(fallback_router)  # catch-all — реєструється останнім
+    dp.include_router(ai_handler.router)  # catch-all (AI або «не розумію») — останнім
 
     await scheduler.setup(bot)
 
