@@ -1,5 +1,5 @@
 """Хендлер «➕ Додати» — FSM-флоу для задач і подій."""
-from datetime import date
+from datetime import date, time, timedelta
 
 import utils
 from aiogram import F, Router
@@ -18,14 +18,19 @@ from services import items, storage
 
 router = Router()
 
+HOUR_FROM = 8
+HOUR_TO = 22
+
 
 class Add(StatesGroup):
-    task_title = State()
-    task_date = State()
-    event_title = State()
-    event_date = State()
-    event_time = State()
+    title = State()
+    date = State()          # показано кнопки дати
+    date_manual = State()   # очікуємо введену вручну дату
+    event_hour = State()
+    event_minute = State()
 
+
+# --- Клавіатури ----------------------------------------------------------
 
 def _type_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -38,9 +43,66 @@ def _type_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-async def _current_year() -> int:
+def _date_keyboard(allow_none: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="Сьогодні", callback_data="date:today"),
+            InlineKeyboardButton(text="Завтра", callback_data="date:tomorrow"),
+        ],
+        [InlineKeyboardButton(text="📅 Інша дата", callback_data="date:manual")],
+    ]
+    if allow_none:
+        rows.append([InlineKeyboardButton(text="⏭ Без дати", callback_data="date:none")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _hour_keyboard() -> InlineKeyboardMarkup:
+    hours = list(range(HOUR_FROM, HOUR_TO + 1))
+    rows = []
+    for i in range(0, len(hours), 5):
+        rows.append(
+            [
+                InlineKeyboardButton(text=f"{h:02d}", callback_data=f"hour:{h}")
+                for h in hours[i : i + 5]
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⏭ Без часу", callback_data="hour:none")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _minute_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"{m:02d}", callback_data=f"min:{m}")
+                for m in (0, 15, 30, 45)
+            ]
+        ]
+    )
+
+
+# --- Helpers -------------------------------------------------------------
+
+async def _today() -> date:
     tz = await storage.get_setting("timezone")
-    return utils.now_local(tz).year
+    return utils.now_local(tz).date()
+
+
+async def _proceed_after_date(message: Message, state: FSMContext, the_date: date | None) -> None:
+    """Після вибору дати: задачу зберігаємо, для події йдемо до вибору часу."""
+    data = await state.get_data()
+    if data["type"] == "task":
+        await items.add_item("task", data["title"], date=the_date)
+        await state.clear()
+        title = utils.esc(data["title"])
+        if the_date:
+            await message.answer(f"✅ Задача додана: {title} (до {utils.fmt_date(the_date)})")
+        else:
+            await message.answer(f"✅ Задача додана: {title}")
+    else:  # event
+        await state.update_data(date=the_date.isoformat())
+        await state.set_state(Add.event_hour)
+        await message.answer("О котрій? Обери годину:", reply_markup=_hour_keyboard())
 
 
 # --- Вхід у флоу ---------------------------------------------------------
@@ -62,92 +124,106 @@ async def cancel(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "add:task")
 async def choose_task(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(Add.task_title)
+    await state.set_data({"type": "task"})
+    await state.set_state(Add.title)
     await callback.message.edit_text("📋 Нова задача.\nНазва?")
     await callback.answer()
 
 
 @router.callback_query(F.data == "add:event")
 async def choose_event(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(Add.event_title)
+    await state.set_data({"type": "event"})
+    await state.set_state(Add.title)
     await callback.message.edit_text("📅 Нова подія.\nНазва?")
     await callback.answer()
 
 
-# --- Гілка «Задача» ------------------------------------------------------
+# --- Назва + вибір дати --------------------------------------------------
 
-@router.message(Add.task_title)
-async def task_title(message: Message, state: FSMContext) -> None:
-    await state.update_data(title=message.text.strip())
-    await state.set_state(Add.task_date)
-    await message.answer("На коли? (ДД.ММ або /skip)")
-
-
-@router.message(Command("skip"), Add.task_date)
-async def task_skip_date(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    await items.add_item("task", data["title"])
-    await state.clear()
-    await message.answer(f"✅ Задача додана: {utils.esc(data['title'])}")
-
-
-@router.message(Add.task_date)
-async def task_date(message: Message, state: FSMContext) -> None:
-    parsed = utils.parse_date(message.text, default_year=await _current_year())
-    if parsed is None:
-        await message.answer("Не зрозумів дату. Формат ДД.ММ (напр. 05.06) або /skip")
-        return
-    data = await state.get_data()
-    await items.add_item("task", data["title"], date=parsed)
-    await state.clear()
+@router.message(Add.title)
+async def set_title(message: Message, state: FSMContext) -> None:
+    data = await state.update_data(title=message.text.strip())
+    await state.set_state(Add.date)
     await message.answer(
-        f"✅ Задача додана: {utils.esc(data['title'])} (до {utils.fmt_date(parsed)})"
+        "Коли?",
+        reply_markup=_date_keyboard(allow_none=data["type"] == "task"),
     )
 
 
-# --- Гілка «Подія» -------------------------------------------------------
-
-@router.message(Add.event_title)
-async def event_title(message: Message, state: FSMContext) -> None:
-    await state.update_data(title=message.text.strip())
-    await state.set_state(Add.event_date)
-    await message.answer("Дата? (ДД.ММ або ДД.ММ.РРРР)")
+@router.callback_query(Add.date, F.data == "date:today")
+async def date_today(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
+    await _proceed_after_date(callback.message, state, await _today())
 
 
-@router.message(Add.event_date)
-async def event_date(message: Message, state: FSMContext) -> None:
-    parsed = utils.parse_date(message.text, default_year=await _current_year())
+@router.callback_query(Add.date, F.data == "date:tomorrow")
+async def date_tomorrow(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
+    await _proceed_after_date(callback.message, state, await _today() + timedelta(days=1))
+
+
+@router.callback_query(Add.date, F.data == "date:none")
+async def date_none(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
+    await _proceed_after_date(callback.message, state, None)
+
+
+@router.callback_query(Add.date, F.data == "date:manual")
+async def date_manual_prompt(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(Add.date_manual)
+    await callback.message.edit_text("Введи дату (ДД.ММ або ДД.ММ.РРРР):")
+    await callback.answer()
+
+
+@router.message(Add.date_manual)
+async def date_manual_input(message: Message, state: FSMContext) -> None:
+    today = await _today()
+    parsed = utils.parse_date(message.text, default_year=today.year)
     if parsed is None:
         await message.answer("Не зрозумів дату. Формат ДД.ММ або ДД.ММ.РРРР")
         return
-    await state.update_data(date=parsed.isoformat())
-    await state.set_state(Add.event_time)
-    await message.answer("Час? (ГГ:ХХ або /skip)")
+    await _proceed_after_date(message, state, parsed)
 
 
-@router.message(Command("skip"), Add.event_time)
-async def event_skip_time(message: Message, state: FSMContext) -> None:
+# --- Час події: година -> хвилини ----------------------------------------
+
+@router.callback_query(Add.event_hour, F.data == "hour:none")
+async def hour_none(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     event_dt = date.fromisoformat(data["date"])
     await items.add_item("event", data["title"], date=event_dt)
     await state.clear()
-    await message.answer(
+    await callback.message.edit_text(
         f"✅ Подія додана: {utils.esc(data['title'])} — {utils.fmt_date(event_dt)}"
     )
+    await callback.answer()
 
 
-@router.message(Add.event_time)
-async def event_time(message: Message, state: FSMContext) -> None:
-    parsed = utils.parse_time(message.text)
-    if parsed is None:
-        await message.answer("Не зрозумів час. Формат ГГ:ХХ (напр. 14:30) або /skip")
-        return
+@router.callback_query(Add.event_hour, F.data.startswith("hour:"))
+async def hour_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    hour = int(callback.data.split(":")[1])
+    await state.update_data(hour=hour)
+    await state.set_state(Add.event_minute)
+    await callback.message.edit_text(
+        f"Година {hour:02d}. Хвилини:", reply_markup=_minute_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(Add.event_minute, F.data.startswith("min:"))
+async def minute_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    minute = int(callback.data.split(":")[1])
     data = await state.get_data()
     event_dt = date.fromisoformat(data["date"])
-    await items.add_item("event", data["title"], date=event_dt, time=parsed)
+    event_time = time(data["hour"], minute)
+    await items.add_item("event", data["title"], date=event_dt, time=event_time)
     await state.clear()
-    await message.answer(
+    await callback.message.edit_text(
         f"✅ Подія додана: {utils.esc(data['title'])} — "
-        f"{utils.fmt_date(event_dt)} {utils.fmt_time(parsed)}"
+        f"{utils.fmt_date(event_dt)} {utils.fmt_time(event_time)}"
     )
+    await callback.answer()
     # TODO (Крок scheduler): поставити нагадування за 1 годину до події
