@@ -76,6 +76,13 @@ async def schedule_reminder_for(item: Item) -> None:
     schedule_event_reminder(item, await storage.timezone())
 
 
+def cancel_reminder(item_id: int) -> None:
+    """Прибирає нагадування (напр. коли подію видалили)."""
+    job_id = f"reminder:{item_id}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+
+
 # --- Старт ---------------------------------------------------------------
 
 async def setup(bot: Bot) -> None:

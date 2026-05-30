@@ -1,10 +1,11 @@
 """AI-асистент на Claude.
 
-Крок 2: агентний цикл tool-use + інструмент читання `list_items`.
-Створення/закриття/видалення додаються в наступних кроках.
+Агентний цикл tool-use з інструментами: list_items (читання),
+create_item (створення), close_task / delete_item (з підтвердженням користувача).
 """
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date as date_cls, timedelta
 
 from anthropic import AsyncAnthropic
@@ -27,6 +28,13 @@ _client: AsyncAnthropic | None = (
 
 def enabled() -> bool:
     return _client is not None
+
+
+@dataclass
+class AgentReply:
+    """Відповідь агента: або текст, або запит на підтвердження дії."""
+    text: str | None = None
+    confirm: dict | None = None  # {"action": "close"|"delete", "id": int, "title": str}
 
 
 # --- Інструменти ---------------------------------------------------------
@@ -77,6 +85,31 @@ TOOLS = [
                 "time": {"type": "string", "description": "HH:MM (лише подія)"},
             },
             "required": ["type", "title"],
+        },
+    },
+    {
+        "name": "close_task",
+        "description": (
+            "Позначити задачу виконаною. Працює ЛИШЕ для задач (type=task), "
+            "не для подій. Передай id задачі (дізнайся його через list_items). "
+            "Дія потребує підтвердження користувача — не вважай її виконаною одразу."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "delete_item",
+        "description": (
+            "Видалити запис (задачу або подію) за id. Єдиний спосіб прибрати "
+            "помилкову чи скасовану подію. Дія потребує підтвердження користувача."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
         },
         "cache_control": {"type": "ephemeral"},
     },
@@ -160,6 +193,28 @@ async def _run_tool(name: str, tool_input: dict) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
+async def _prepare_confirm(name: str, tool_input: dict) -> dict:
+    """Валідує деструктивну дію. ok=True -> треба підтвердження; інакше -> помилка моделі."""
+    try:
+        item_id = int(tool_input.get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "потрібен числовий id"}
+
+    item = await items.get_item(item_id)
+    if item is None:
+        return {"ok": False, "error": f"запис id={item_id} не знайдено"}
+
+    if name == "close_task":
+        if item.type != "task":
+            return {"ok": False, "error": "закрити можна лише задачу; подію можна видалити"}
+        if item.done:
+            return {"ok": False, "error": "задача вже виконана"}
+        return {"ok": True, "confirm": {"action": "close", "id": item_id, "title": item.title}}
+
+    # delete_item
+    return {"ok": True, "confirm": {"action": "delete", "id": item_id, "title": item.title}}
+
+
 # --- Промпт і агентний цикл ----------------------------------------------
 
 async def _system_prompt() -> str:
@@ -177,7 +232,10 @@ async def _system_prompt() -> str:
         "(«завтра», «у п'ятницю», «через тиждень») переводь у конкретну дату сам, "
         "спираючись на поточну. Після створення коротко підтвердь, що саме додав "
         "(назва, дата, час) і чи поставлено нагадування.\n"
-        "Закривати й видаляти записи ти поки не вмієш — про це скажи, якщо попросять."
+        "Щоб закрити задачу — close_task(id); щоб видалити задачу/подію — "
+        "delete_item(id). Id бери з list_items. Ці дії потребують підтвердження "
+        "користувача (бот сам покаже кнопки), тому не звітуй про них як про вже "
+        "зроблені — лише ініціюй виклик інструмента."
     )
 
 
@@ -185,8 +243,8 @@ def _text_of(response) -> str:
     return "".join(block.text for block in response.content if block.type == "text")
 
 
-async def respond(text: str) -> str:
-    """Агентний цикл: модель може викликати інструменти, поки не дасть фінальну відповідь."""
+async def respond(text: str) -> AgentReply:
+    """Агентний цикл. Повертає текст або запит на підтвердження деструктивної дії."""
     system = await _system_prompt()
     messages: list[dict] = [{"role": "user", "content": text}]
 
@@ -200,17 +258,24 @@ async def respond(text: str) -> str:
         )
 
         if response.stop_reason != "tool_use":
-            return _text_of(response)
+            return AgentReply(text=_text_of(response))
 
         messages.append({"role": "assistant", "content": response.content})
         tool_results = []
         for block in response.content:
-            if block.type == "tool_use":
+            if block.type != "tool_use":
+                continue
+            if block.name in ("close_task", "delete_item"):
+                prepared = await _prepare_confirm(block.name, block.input)
+                if prepared["ok"]:
+                    return AgentReply(confirm=prepared["confirm"])  # чекаємо кнопку
+                output = json.dumps({"error": prepared["error"]}, ensure_ascii=False)
+            else:
                 output = await _run_tool(block.name, block.input)
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": output}
-                )
+            tool_results.append(
+                {"type": "tool_result", "tool_use_id": block.id, "content": output}
+            )
         messages.append({"role": "user", "content": tool_results})
 
     logger.warning("AI: вичерпано ліміт ітерацій tool-loop")
-    return "Щось я заплутався 🤔 Спробуй переформулювати."
+    return AgentReply(text="Щось я заплутався 🤔 Спробуй переформулювати.")

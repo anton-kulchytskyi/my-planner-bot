@@ -104,11 +104,26 @@ async def get_events_with_time_from(day: date_) -> list[Item]:
         return list(result.scalars().all())
 
 
+async def get_item(item_id: int) -> Item | None:
+    async with async_session() as session:
+        return await session.get(Item, item_id)
+
+
 async def mark_done(item_id: int) -> bool:
     async with async_session() as session:
         item = await session.get(Item, item_id)
         if item is None or item.type != "task":
             return False
         item.done = True
+        await session.commit()
+        return True
+
+
+async def delete_item(item_id: int) -> bool:
+    async with async_session() as session:
+        item = await session.get(Item, item_id)
+        if item is None:
+            return False
+        await session.delete(item)
         await session.commit()
         return True
