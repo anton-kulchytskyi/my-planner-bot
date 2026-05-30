@@ -1,6 +1,5 @@
 """Personal Planner Bot — точка входу.
 
-Крок 1: мінімальний бот без БД для перевірки деплою.
 Реагує тільки на ALLOWED_USER_ID, решта ігнорується мовчки.
 """
 import asyncio
@@ -8,12 +7,15 @@ import logging
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import Bot, Dispatcher, Router
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
 from aiogram.types import Message, TelegramObject, Update, User
 from sqlalchemy import text
 
 import config
 import database
+from handlers import setup_routers
+from keyboards import main_keyboard
 from services import storage
 
 logging.basicConfig(
@@ -22,7 +24,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("planner-bot")
 
-router = Router()
+start_router = Router()
+fallback_router = Router()
 
 
 async def allowed_user_middleware(
@@ -37,17 +40,21 @@ async def allowed_user_middleware(
     return await handler(event, data)
 
 
-@router.message(CommandStart())
+@start_router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
         "Привіт! 👋 Я твій планувальник.\n"
-        "Поки що це тестовий деплой — функціонал додаємо по кроках."
+        "Користуйся кнопками меню знизу.",
+        reply_markup=main_keyboard(),
     )
 
 
-@router.message()
+@fallback_router.message()
 async def fallback(message: Message) -> None:
-    await message.answer("Бот живий ✅ (функціонал ще в розробці)")
+    await message.answer(
+        "Не розумію 🤔 Скористайся кнопками меню або /help.",
+        reply_markup=main_keyboard(),
+    )
 
 
 async def init_db() -> None:
@@ -61,10 +68,15 @@ async def init_db() -> None:
 async def main() -> None:
     await init_db()
 
-    bot = Bot(token=config.BOT_TOKEN)
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode="HTML"),
+    )
     dp = Dispatcher()
     dp.update.outer_middleware(allowed_user_middleware)
-    dp.include_router(router)
+    dp.include_router(start_router)
+    setup_routers(dp)
+    dp.include_router(fallback_router)  # catch-all — реєструється останнім
 
     logger.info("Бот запускається (polling)...")
     await bot.delete_webhook(drop_pending_updates=True)
