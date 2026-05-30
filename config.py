@@ -9,8 +9,17 @@ def _require(name: str) -> str:
     return value
 
 
+def _normalize_db_url(url: str) -> str:
+    """Приводить URL до asyncpg-формату (Railway дає postgresql:// або postgres://)."""
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
+
+
 BOT_TOKEN: str = _require("BOT_TOKEN")
 ALLOWED_USER_ID: int = int(_require("ALLOWED_USER_ID"))
 
-# DATABASE_URL додамо на Кроці 2 (PostgreSQL)
-DATABASE_URL: str | None = os.environ.get("DATABASE_URL")
+DATABASE_URL: str = _require("DATABASE_URL")
+DATABASE_URL_ASYNC: str = _normalize_db_url(DATABASE_URL)

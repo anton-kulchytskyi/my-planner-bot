@@ -10,8 +10,11 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message, TelegramObject, Update, User
+from sqlalchemy import text
 
 import config
+import database
+from services import storage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,7 +50,17 @@ async def fallback(message: Message) -> None:
     await message.answer("Бот живий ✅ (функціонал ще в розробці)")
 
 
+async def init_db() -> None:
+    """Перевіряє з'єднання з БД і засіває дефолтні налаштування."""
+    async with database.engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+    await storage.ensure_defaults()
+    logger.info("БД підключена ✅")
+
+
 async def main() -> None:
+    await init_db()
+
     bot = Bot(token=config.BOT_TOKEN)
     dp = Dispatcher()
     dp.update.outer_middleware(allowed_user_middleware)
