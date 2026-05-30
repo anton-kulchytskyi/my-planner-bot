@@ -5,13 +5,14 @@
 """
 import json
 import logging
-from datetime import timedelta
+from datetime import date as date_cls, timedelta
 
 from anthropic import AsyncAnthropic
 
 import config
+import utils
 from models import Item
-from services import clock, items
+from services import clock, items, scheduler
 
 logger = logging.getLogger("planner-bot")
 
@@ -52,8 +53,33 @@ TOOLS = [
             },
             "required": ["scope"],
         },
+    },
+    {
+        "name": "create_item",
+        "description": (
+            "Створити нову задачу або подію.\n"
+            "• type: 'task' (задача) або 'event' (подія)\n"
+            "• title: коротка назва\n"
+            "• date: 'YYYY-MM-DD'. Відносні дати ('завтра', 'у п'ятницю') ти "
+            "резолвиш сам на основі поточної дати. Для події дата ОБОВ'ЯЗКОВА, "
+            "для задачі — опційна (тоді задача без дедлайну).\n"
+            "• time: 'HH:MM', лише для події й лише якщо користувач назвав час. "
+            "Для події з часом автоматично ставиться нагадування за годину.\n"
+            "Якщо бракує назви або дати події — спершу перепитай користувача, "
+            "не вигадуй."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": ["task", "event"]},
+                "title": {"type": "string"},
+                "date": {"type": "string", "description": "YYYY-MM-DD"},
+                "time": {"type": "string", "description": "HH:MM (лише подія)"},
+            },
+            "required": ["type", "title"],
+        },
         "cache_control": {"type": "ephemeral"},
-    }
+    },
 ]
 
 
@@ -87,9 +113,48 @@ async def _list_items(scope: str) -> dict:
     return {"error": f"unknown scope: {scope}"}
 
 
+async def _create_item(tool_input: dict) -> dict:
+    item_type = tool_input.get("type")
+    title = (tool_input.get("title") or "").strip()
+    raw_date = tool_input.get("date")
+    raw_time = tool_input.get("time")
+
+    if item_type not in ("task", "event"):
+        return {"error": "type має бути 'task' або 'event'"}
+    if not title:
+        return {"error": "потрібна назва (title)"}
+
+    the_date = None
+    if raw_date:
+        try:
+            the_date = date_cls.fromisoformat(raw_date)
+        except (ValueError, TypeError):
+            return {"error": f"невалідна дата '{raw_date}', очікую YYYY-MM-DD"}
+
+    if item_type == "event" and the_date is None:
+        return {"error": "для події потрібна дата"}
+
+    the_time = None
+    if item_type == "event" and raw_time:
+        the_time = utils.parse_time(raw_time)
+        if the_time is None:
+            return {"error": f"невалідний час '{raw_time}', очікую HH:MM"}
+
+    item = await items.add_item(item_type, title, date=the_date, time=the_time)
+
+    reminder_set = False
+    if item_type == "event" and the_time is not None:
+        await scheduler.schedule_reminder_for(item)
+        reminder_set = True
+
+    return {"created": _serialize(item), "reminder_set": reminder_set}
+
+
 async def _run_tool(name: str, tool_input: dict) -> str:
     if name == "list_items":
         result = await _list_items(tool_input.get("scope", ""))
+    elif name == "create_item":
+        result = await _create_item(tool_input)
     else:
         result = {"error": f"unknown tool: {name}"}
     return json.dumps(result, ensure_ascii=False)
@@ -107,8 +172,12 @@ async def _system_prompt() -> str:
         "«найближчі дні». Якщо сумніваєшся в слові — обери питомо українське.\n"
         f"Поточні дата й час користувача: {now:%Y-%m-%d %H:%M} ({now.tzname()}). "
         "Коли користувач питає про свої задачі, події чи розклад — спершу виклич "
-        "list_items, щоб подивитися актуальні дані, і відповідай на їх основі. "
-        "Поки що ти вмієш лише дивитися (створення й закриття задач додамо незабаром)."
+        "list_items, щоб подивитися актуальні дані, і відповідай на їх основі.\n"
+        "Коли користувач просить щось додати — виклич create_item. Відносні дати "
+        "(«завтра», «у п'ятницю», «через тиждень») переводь у конкретну дату сам, "
+        "спираючись на поточну. Після створення коротко підтвердь, що саме додав "
+        "(назва, дата, час) і чи поставлено нагадування.\n"
+        "Закривати й видаляти записи ти поки не вмієш — про це скажи, якщо попросять."
     )
 
 
