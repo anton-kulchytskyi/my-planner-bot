@@ -76,6 +76,21 @@ async def get_upcoming(start: date_, end: date_) -> list[Item]:
         return list(result.scalars().all())
 
 
+async def get_open_tasks(today: date_) -> list[Item]:
+    """Незавершені задачі на сьогодні або без дати."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Item)
+            .where(
+                Item.type == "task",
+                Item.done.is_(False),
+                or_(Item.date == today, Item.date.is_(None)),
+            )
+            .order_by(nulls_last(Item.date), Item.id)
+        )
+        return list(result.scalars().all())
+
+
 async def mark_done(item_id: int) -> bool:
     async with async_session() as session:
         item = await session.get(Item, item_id)
