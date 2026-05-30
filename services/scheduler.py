@@ -1,17 +1,17 @@
 """APScheduler: ранковий briefing + нагадування про події."""
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import config
+import keyboards
+import utils
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
-
-import config
-import utils
 from models import Item
-from services import items, storage
+from services import clock, items, storage
 
 logger = logging.getLogger("planner-bot")
 
@@ -21,31 +21,28 @@ _bot: Bot | None = None
 BRIEFING_JOB_ID = "briefing"
 
 
-async def _tz() -> ZoneInfo:
-    return ZoneInfo(await storage.get_setting("timezone"))
-
-
 # --- Briefing ------------------------------------------------------------
 
 async def _send_briefing() -> None:
-    from handlers.today import render_today  # lazy — уникаємо циклічного імпорту
+    from handlers.today import build_today  # lazy — уникаємо циклічного імпорту
 
-    text, keyboard = await render_today()
-    await _bot.send_message(config.ALLOWED_USER_ID, text, reply_markup=keyboard)
+    view = await build_today()
+    await _bot.send_message(
+        config.ALLOWED_USER_ID, view.text, reply_markup=keyboards.inline_column(view.buttons)
+    )
 
 
 async def reschedule_briefing() -> None:
     """(Пере)ставляє щоденний briefing за часом із налаштувань."""
-    raw = await storage.get_setting("morning_time")
-    parsed = utils.parse_time(raw) or time(8, 0)
-    tz = await _tz()
+    at = await storage.morning_time()
+    tz = await storage.timezone()
     scheduler.add_job(
         _send_briefing,
-        CronTrigger(hour=parsed.hour, minute=parsed.minute, timezone=tz),
+        CronTrigger(hour=at.hour, minute=at.minute, timezone=tz),
         id=BRIEFING_JOB_ID,
         replace_existing=True,
     )
-    logger.info("Briefing заплановано на %02d:%02d", parsed.hour, parsed.minute)
+    logger.info("Briefing заплановано на %02d:%02d", at.hour, at.minute)
 
 
 # --- Нагадування про події ----------------------------------------------
@@ -76,7 +73,7 @@ def schedule_event_reminder(item: Item, tz: ZoneInfo) -> None:
 
 async def schedule_reminder_for(item: Item) -> None:
     """Зручна обгортка для виклику з хендлера створення події."""
-    schedule_event_reminder(item, await _tz())
+    schedule_event_reminder(item, await storage.timezone())
 
 
 # --- Старт ---------------------------------------------------------------
@@ -88,8 +85,8 @@ async def setup(bot: Bot) -> None:
     await reschedule_briefing()
 
     # Відновлюємо нагадування для майбутніх подій (джоби в пам'яті губляться при рестарті)
-    tz = await _tz()
-    today = utils.now_local(str(tz)).date()
+    tz = await storage.timezone()
+    today = await clock.today()
     for event in await items.get_events_with_time_from(today):
         schedule_event_reminder(event, tz)
 

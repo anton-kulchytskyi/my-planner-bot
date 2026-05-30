@@ -1,4 +1,5 @@
 """Хендлер «⚙️ Налаштування» — зміна часу ранкового briefing."""
+import keyboards
 import utils
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -11,7 +12,6 @@ from aiogram.types import (
     Message,
 )
 
-from keyboards import BTN_SETTINGS
 from services import scheduler, storage
 
 router = Router()
@@ -30,9 +30,9 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
 
 
 @router.message(Command("settings"))
-@router.message(F.text == BTN_SETTINGS)
+@router.message(F.text == keyboards.BTN_SETTINGS)
 async def settings(message: Message) -> None:
-    current = await storage.get_setting("morning_time")
+    current = utils.fmt_time(await storage.morning_time())
     await message.answer(
         f"⚙️ <b>Налаштування</b>\nBriefing зараз: {current}",
         reply_markup=_settings_keyboard(),
@@ -52,8 +52,7 @@ async def set_time(message: Message, state: FSMContext) -> None:
     if parsed is None:
         await message.answer("Не зрозумів час. Формат ГГ:ХХ (напр. 07:30)")
         return
-    value = utils.fmt_time(parsed)
-    await storage.set_setting("morning_time", value)
+    await storage.set_morning_time(parsed)
     await state.clear()
     await scheduler.reschedule_briefing()
-    await message.answer(f"✅ Briefing о {value}")
+    await message.answer(f"✅ Briefing о {utils.fmt_time(parsed)}")

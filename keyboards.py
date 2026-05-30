@@ -1,5 +1,12 @@
-"""Постійна Reply-клавіатура головного меню."""
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+"""Клавіатури: постійне меню + збірка inline з абстрактних кнопок."""
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
+
+from views import Button
 
 BTN_TODAY = "☀️ Сьогодні"
 BTN_ADD = "➕ Додати"
@@ -18,4 +25,16 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         is_persistent=True,
+    )
+
+
+def inline_column(buttons: list[Button]) -> InlineKeyboardMarkup | None:
+    """Кожна кнопка — окремим рядком. Порожній список -> None."""
+    if not buttons:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=b.label, callback_data=b.callback_data)]
+            for b in buttons
+        ]
     )

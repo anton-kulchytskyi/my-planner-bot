@@ -1,16 +1,11 @@
-"""Допоміжні функції: парсинг дат/часу і локальний час."""
+"""Допоміжні функції: парсинг/форматування дат і часу, текст."""
 from datetime import date, datetime, time
 from html import escape
-from zoneinfo import ZoneInfo
 
 
 def esc(value: str) -> str:
     """Екранує текст для HTML parse_mode."""
     return escape(value)
-
-
-def now_local(tz_name: str) -> datetime:
-    return datetime.now(ZoneInfo(tz_name))
 
 
 def parse_date(value: str, *, default_year: int) -> date | None:

@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 from keyboards import BTN_ADD
-from services import items, scheduler, storage
+from services import clock, items, scheduler
 
 router = Router()
 
@@ -83,11 +83,6 @@ def _minute_keyboard() -> InlineKeyboardMarkup:
 
 # --- Helpers -------------------------------------------------------------
 
-async def _today() -> date:
-    tz = await storage.get_setting("timezone")
-    return utils.now_local(tz).date()
-
-
 async def _proceed_after_date(message: Message, state: FSMContext, the_date: date | None) -> None:
     """Після вибору дати: задачу зберігаємо, для події йдемо до вибору часу."""
     data = await state.get_data()
@@ -154,14 +149,14 @@ async def set_title(message: Message, state: FSMContext) -> None:
 async def date_today(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer()
-    await _proceed_after_date(callback.message, state, await _today())
+    await _proceed_after_date(callback.message, state, await clock.today())
 
 
 @router.callback_query(Add.date, F.data == "date:tomorrow")
 async def date_tomorrow(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer()
-    await _proceed_after_date(callback.message, state, await _today() + timedelta(days=1))
+    await _proceed_after_date(callback.message, state, await clock.today() + timedelta(days=1))
 
 
 @router.callback_query(Add.date, F.data == "date:none")
@@ -180,7 +175,7 @@ async def date_manual_prompt(callback: CallbackQuery, state: FSMContext) -> None
 
 @router.message(Add.date_manual)
 async def date_manual_input(message: Message, state: FSMContext) -> None:
-    today = await _today()
+    today = await clock.today()
     parsed = utils.parse_date(message.text, default_year=today.year)
     if parsed is None:
         await message.answer("Не зрозумів дату. Формат ДД.ММ або ДД.ММ.РРРР")
