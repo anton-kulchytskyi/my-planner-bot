@@ -86,13 +86,24 @@ def cancel_reminder(item_id: int) -> None:
 # --- Старт ---------------------------------------------------------------
 
 async def setup(bot: Bot) -> None:
+    from services import recurrence  # lazy — уникаємо циклічного імпорту
+
     global _bot
     _bot = bot
 
     await reschedule_briefing()
 
-    # Відновлюємо нагадування для майбутніх подій (джоби в пам'яті губляться при рестарті)
+    # Розклад: догін матеріалізації при старті + щоденний job
+    await recurrence.materialize_all()
     tz = await storage.timezone()
+    scheduler.add_job(
+        recurrence.materialize_all,
+        CronTrigger(hour=0, minute=5, timezone=tz),
+        id="materialize",
+        replace_existing=True,
+    )
+
+    # Відновлюємо нагадування для майбутніх подій (джоби в пам'яті губляться при рестарті)
     today = await clock.today()
     for event in await items.get_events_with_time_from(today):
         schedule_event_reminder(event, tz)
