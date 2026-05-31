@@ -7,6 +7,7 @@ from keyboards import (
     BTN_ADD,
     BTN_DONE,
     BTN_HELP,
+    BTN_SCHEDULE,
     BTN_SETTINGS,
     BTN_TODAY,
     BTN_UPCOMING,
@@ -20,6 +21,7 @@ HELP_TEXT = (
     f"{BTN_ADD} — додати задачу або подію.\n"
     f"{BTN_DONE} — відмітити незавершені задачі виконаними.\n"
     f"{BTN_UPCOMING} — події й задачі на найближчі 7 днів.\n"
+    f"{BTN_SCHEDULE} — повторювані задачі/події (🔁 у списках).\n"
     f"{BTN_SETTINGS} — змінити час ранкового briefing.\n"
     f"{BTN_HELP} — це повідомлення.\n\n"
     "Команди працюють так само: /today, /add, /done, /upcoming, /settings, /help.\n"

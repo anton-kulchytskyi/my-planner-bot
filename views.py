@@ -27,6 +27,11 @@ UPCOMING_EMPTY = "На найближчі 7 днів нічого не запл�
 DONE_EMPTY = "Немає незавершених задач 🎉"
 
 
+def _mark(item: Item) -> str:
+    """🔁 для повторюваних (згенерованих з розкладу) записів."""
+    return "🔁 " if item.recurrence_id else ""
+
+
 def today_view(
     today: date,
     overdue: list[Item],
@@ -42,20 +47,20 @@ def today_view(
         lines.append("⚠️ <b>Прострочено:</b>")
         for item in overdue:
             delta = (today - item.date).days
-            lines.append(f"• {utils.esc(item.title)} ({utils.days_ago(delta)})")
+            lines.append(f"• {_mark(item)}{utils.esc(item.title)} ({utils.days_ago(delta)})")
         lines.append("")
 
     if events:
         lines.append("📅 <b>Події:</b>")
         for item in events:
             prefix = f"{utils.fmt_time(item.time)} — " if item.time else ""
-            lines.append(f"• {prefix}{utils.esc(item.title)}")
+            lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}")
         lines.append("")
 
     if tasks:
         lines.append("📋 <b>На сьогодні:</b>")
         for item in tasks:
-            lines.append(f"• {utils.esc(item.title)}")
+            lines.append(f"• {_mark(item)}{utils.esc(item.title)}")
         lines.append("")
 
     buttons = [Button(f"✅ {item.title[:30]}", f"tdone:{item.id}") for item in overdue]
@@ -76,7 +81,7 @@ def upcoming_view(rows: list[Item]) -> View:
             lines.append(f"<b>{utils.human_date(item.date)}</b>")
         timed = item.type == "event" and item.time
         prefix = f"{utils.fmt_time(item.time)} — " if timed else ""
-        lines.append(f"• {prefix}{utils.esc(item.title)}")
+        lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}")
 
     return View("\n".join(lines))
 

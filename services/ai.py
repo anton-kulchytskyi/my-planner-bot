@@ -14,7 +14,7 @@ from anthropic import AsyncAnthropic
 import config
 import utils
 from models import Item
-from services import clock, items, scheduler
+from services import clock, items, recurrence, scheduler
 
 logger = logging.getLogger("planner-bot")
 
@@ -142,6 +142,46 @@ TOOLS = [
             "properties": {"id": {"type": "integer"}},
             "required": ["id"],
         },
+    },
+    {
+        "name": "items_on",
+        "description": (
+            "Що заплановано на конкретну дату (події та задачі, включно з "
+            "повторюваними). Використовуй ПЕРЕД створенням події з часом, щоб "
+            "перевірити накладки й завантаженість дня."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"date": {"type": "string", "description": "YYYY-MM-DD"}},
+            "required": ["date"],
+        },
+    },
+    {
+        "name": "create_recurrence",
+        "description": (
+            "Створити повторюване правило (розклад). Приклади: «щовівторка о 18 "
+            "тренування», «по буднях о 9 стендап», «14 березня щороку день "
+            "народження мами».\n"
+            "• type: 'task' або 'event'\n"
+            "• freq: daily | weekly | monthly | yearly\n"
+            "• weekdays: масив чисел для weekly (Пн=0 … Нд=6), напр. [1,3]\n"
+            "• month_day: число 1–31 для monthly та yearly\n"
+            "• month: 1–12 для yearly\n"
+            "• time: 'HH:MM', лише для події"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": ["task", "event"]},
+                "title": {"type": "string"},
+                "freq": {"type": "string", "enum": ["daily", "weekly", "monthly", "yearly"]},
+                "weekdays": {"type": "array", "items": {"type": "integer"}},
+                "month_day": {"type": "integer"},
+                "month": {"type": "integer"},
+                "time": {"type": "string", "description": "HH:MM (лише подія)"},
+            },
+            "required": ["type", "title", "freq"],
+        },
         "cache_control": {"type": "ephemeral"},
     },
 ]
@@ -214,11 +254,69 @@ async def _create_item(tool_input: dict) -> dict:
     return {"created": _serialize(item), "reminder_set": reminder_set}
 
 
+async def _items_on(date_str: str) -> dict:
+    try:
+        day = date_cls.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        return {"error": f"невалідна дата '{date_str}', очікую YYYY-MM-DD"}
+    return {
+        "date": day.isoformat(),
+        "events": [_serialize(i) for i in await items.get_events_on(day)],
+        "tasks": [_serialize(i) for i in await items.get_tasks_on(day)],
+    }
+
+
+async def _create_recurrence(tool_input: dict) -> dict:
+    item_type = tool_input.get("type")
+    title = (tool_input.get("title") or "").strip()
+    freq = tool_input.get("freq")
+
+    if item_type not in ("task", "event"):
+        return {"error": "type має бути 'task' або 'event'"}
+    if not title:
+        return {"error": "потрібна назва (title)"}
+    if freq not in ("daily", "weekly", "monthly", "yearly"):
+        return {"error": "freq має бути daily/weekly/monthly/yearly"}
+
+    weekdays = month_day = month = None
+    if freq == "weekly":
+        days = tool_input.get("weekdays") or []
+        if not days or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
+            return {"error": "для weekly потрібен weekdays — масив чисел 0..6"}
+        weekdays = ",".join(str(d) for d in sorted(set(days)))
+    elif freq in ("monthly", "yearly"):
+        month_day = tool_input.get("month_day")
+        if not isinstance(month_day, int) or not 1 <= month_day <= 31:
+            return {"error": "потрібен month_day 1..31"}
+        if freq == "yearly":
+            month = tool_input.get("month")
+            if not isinstance(month, int) or not 1 <= month <= 12:
+                return {"error": "для yearly потрібен month 1..12"}
+
+    the_time = None
+    if item_type == "event" and tool_input.get("time"):
+        the_time = utils.parse_time(tool_input["time"])
+        if the_time is None:
+            return {"error": f"невалідний час '{tool_input['time']}', очікую HH:MM"}
+
+    rule_id = await recurrence.create_recurrence(
+        item_type, title, freq,
+        weekdays=weekdays, month_day=month_day, month=month, time=the_time,
+    )
+    await recurrence.materialize_rule(rule_id)
+    rule = await recurrence.get_recurrence(rule_id)
+    return {"created_recurrence": recurrence.describe(rule)}
+
+
 async def _run_tool(name: str, tool_input: dict) -> str:
     if name == "list_items":
         result = await _list_items(tool_input.get("scope", ""))
     elif name == "create_item":
         result = await _create_item(tool_input)
+    elif name == "items_on":
+        result = await _items_on(tool_input.get("date", ""))
+    elif name == "create_recurrence":
+        result = await _create_recurrence(tool_input)
     else:
         result = {"error": f"unknown tool: {name}"}
     return json.dumps(result, ensure_ascii=False)
@@ -263,6 +361,12 @@ async def _system_prompt() -> str:
         "(«завтра», «у п'ятницю», «через тиждень») переводь у конкретну дату сам, "
         "спираючись на поточну. Після створення коротко підтвердь, що саме додав "
         "(назва, дата, час) і чи поставлено нагадування.\n"
+        "ПЕРЕД створенням події з часом виклич items_on(дата) і перевір накладки: "
+        "якщо вже є подія з близьким часом (у межах ~години) — попередь про це; "
+        "якщо день і так насичений — згадай. Прохання все одно виконуй, але додай "
+        "коротке попередження й, за потреби, запропонуй інший час.\n"
+        "Коли користувач описує регулярність («щовівторка», «по буднях», «щороку "
+        "14 березня») — це розклад, виклич create_recurrence, а не create_item.\n"
         "Коли користувач просить закрити або видалити запис: знайди його через "
         "list_items, зіставляючи назву НЕЧУТЛИВО ДО РЕГІСТРУ й за змістом "
         "(часткова згадка теж підходить, напр. «зустріч» = «Зустріч з Іваном»). "
