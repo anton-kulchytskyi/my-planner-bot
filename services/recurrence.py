@@ -107,3 +107,85 @@ async def materialize_rule(rule_id: int) -> None:
     until = today + timedelta(days=HORIZON_DAYS)
     tz = await storage.timezone()
     await _materialize_one(rule_id, today, until, tz)
+
+
+# --- CRUD правил ---------------------------------------------------------
+
+async def create_recurrence(
+    item_type: str,
+    title: str,
+    freq: str,
+    *,
+    weekdays: str | None = None,
+    month_day: int | None = None,
+    month: int | None = None,
+    time=None,
+) -> int:
+    today = await clock.today()
+    async with async_session() as session:
+        rule = Recurrence(
+            type=item_type,
+            title=title,
+            freq=freq,
+            weekdays=weekdays,
+            month_day=month_day,
+            month=month,
+            time=time,
+            start_date=today,
+        )
+        session.add(rule)
+        await session.commit()
+        return rule.id
+
+
+async def get_recurrence(rule_id: int) -> Recurrence | None:
+    async with async_session() as session:
+        return await session.get(Recurrence, rule_id)
+
+
+async def list_recurrences() -> list[Recurrence]:
+    async with async_session() as session:
+        result = await session.execute(select(Recurrence).order_by(Recurrence.id))
+        return list(result.scalars().all())
+
+
+async def delete_recurrence(rule_id: int) -> bool:
+    """Видаляє правило + його МАЙБУТНІ входження (минулі лишаються як історія)."""
+    today = await clock.today()
+    async with async_session() as session:
+        rule = await session.get(Recurrence, rule_id)
+        if rule is None:
+            return False
+        result = await session.execute(
+            select(Item).where(Item.recurrence_id == rule_id, Item.date >= today)
+        )
+        for item in result.scalars().all():
+            if item.type == "event" and item.time is not None:
+                scheduler.cancel_reminder(item.id)
+            await session.delete(item)
+        await session.delete(rule)
+        await session.commit()
+        return True
+
+
+# --- Опис правила людською мовою -----------------------------------------
+
+_WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+
+
+def _freq_phrase(rule: Recurrence) -> str:
+    if rule.freq == "daily":
+        return "щодня"
+    if rule.freq == "weekly":
+        return "щотижня: " + ", ".join(_WD[i] for i in sorted(_weekday_set(rule)))
+    if rule.freq == "monthly":
+        return f"щомісяця {rule.month_day}-го"
+    if rule.freq == "yearly":
+        return f"щороку {rule.month_day:02d}.{rule.month:02d}"
+    return rule.freq
+
+
+def describe(rule: Recurrence) -> str:
+    icon = "📅" if rule.type == "event" else "📋"
+    at = f" о {rule.time.strftime('%H:%M')}" if rule.time else ""
+    return f"{icon} {rule.title} — {_freq_phrase(rule)}{at}"
