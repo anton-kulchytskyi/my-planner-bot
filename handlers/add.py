@@ -1,5 +1,5 @@
 """Хендлер «➕ Додати» — FSM-флоу для задач і подій."""
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 import utils
 from aiogram import F, Router
@@ -21,6 +21,9 @@ router = Router()
 HOUR_FROM = 8
 HOUR_TO = 22
 
+# (хвилини, підпис) для вибору тривалості події
+DURATIONS = [(15, "15 хв"), (30, "30 хв"), (45, "45 хв"), (60, "1 год"), (90, "1.5 год"), (120, "2 год")]
+
 
 class Add(StatesGroup):
     title = State()
@@ -28,6 +31,16 @@ class Add(StatesGroup):
     date_manual = State()   # очікуємо введену вручну дату
     event_hour = State()
     event_minute = State()
+    event_duration = State()
+
+
+def _duration_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"dur:{m}") for m, label in DURATIONS[i : i + 3]]
+        for i in range(0, len(DURATIONS), 3)
+    ]
+    rows.append([InlineKeyboardButton(text="⏭ Без тривалості", callback_data="dur:none")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # --- Клавіатури ----------------------------------------------------------
@@ -212,13 +225,41 @@ async def hour_chosen(callback: CallbackQuery, state: FSMContext) -> None:
 async def minute_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     minute = int(callback.data.split(":")[1])
     data = await state.get_data()
-    event_dt = date.fromisoformat(data["date"])
-    event_time = time(data["hour"], minute)
-    item = await items.add_item("event", data["title"], date=event_dt, time=event_time)
-    await state.clear()
-    await scheduler.schedule_reminder_for(item)
+    await state.update_data(time=f"{int(data['hour']):02d}:{minute:02d}")
+    await state.set_state(Add.event_duration)
     await callback.message.edit_text(
-        f"✅ Подія додана: {utils.esc(data['title'])} — "
-        f"{utils.fmt_date(event_dt)} {utils.fmt_time(event_time)}"
+        f"Скільки триватиме? (початок {int(data['hour']):02d}:{minute:02d})",
+        reply_markup=_duration_keyboard(),
     )
     await callback.answer()
+
+
+@router.callback_query(Add.event_duration, F.data == "dur:none")
+async def duration_none(callback: CallbackQuery, state: FSMContext) -> None:
+    await _finalize_event(callback.message, state, end_time=None)
+    await callback.answer()
+
+
+@router.callback_query(Add.event_duration, F.data.startswith("dur:"))
+async def duration_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    minutes = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    start = utils.parse_time(data["time"])
+    end = (datetime.combine(date.today(), start) + timedelta(minutes=minutes)).time()
+    await _finalize_event(callback.message, state, end_time=end)
+    await callback.answer()
+
+
+async def _finalize_event(target: Message, state: FSMContext, end_time: time | None) -> None:
+    data = await state.get_data()
+    event_dt = date.fromisoformat(data["date"])
+    start = utils.parse_time(data["time"])
+    item = await items.add_item(
+        "event", data["title"], date=event_dt, time=start, end_time=end_time
+    )
+    await state.clear()
+    await scheduler.schedule_reminder_for(item)
+    span = utils.fmt_time(start) + (f"–{utils.fmt_time(end_time)}" if end_time else "")
+    await target.edit_text(
+        f"✅ Подія додана: {utils.esc(data['title'])} — {utils.fmt_date(event_dt)} {span}"
+    )

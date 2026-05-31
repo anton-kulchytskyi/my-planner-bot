@@ -104,6 +104,8 @@ TOOLS = [
             "для задачі — опційна (тоді задача без дедлайну).\n"
             "• time: 'HH:MM', лише для події й лише якщо користувач назвав час. "
             "Для події з часом автоматично ставиться нагадування за годину.\n"
+            "• end: 'HH:MM' — час закінчення події. Постав, якщо користувач назвав "
+            "тривалість («годину» -> end = time+1:00) або кінець («до 16:00»).\n"
             "Якщо бракує назви або дати події — спершу перепитай користувача, "
             "не вигадуй."
         ),
@@ -114,6 +116,7 @@ TOOLS = [
                 "title": {"type": "string"},
                 "date": {"type": "string", "description": "YYYY-MM-DD"},
                 "time": {"type": "string", "description": "HH:MM (лише подія)"},
+                "end": {"type": "string", "description": "HH:MM кінець (лише подія)"},
             },
             "required": ["type", "title"],
         },
@@ -179,6 +182,7 @@ TOOLS = [
                 "month_day": {"type": "integer"},
                 "month": {"type": "integer"},
                 "time": {"type": "string", "description": "HH:MM (лише подія)"},
+                "end": {"type": "string", "description": "HH:MM кінець (лише подія)"},
             },
             "required": ["type", "title", "freq"],
         },
@@ -194,6 +198,7 @@ def _serialize(item: Item) -> dict:
         "title": item.title,
         "date": item.date.isoformat() if item.date else None,
         "time": item.time.strftime("%H:%M") if item.time else None,
+        "end": item.end_time.strftime("%H:%M") if item.end_time else None,
         "done": item.done,
     }
 
@@ -239,12 +244,20 @@ async def _create_item(tool_input: dict) -> dict:
         return {"error": "для події потрібна дата"}
 
     the_time = None
+    the_end = None
     if item_type == "event" and raw_time:
         the_time = utils.parse_time(raw_time)
         if the_time is None:
             return {"error": f"невалідний час '{raw_time}', очікую HH:MM"}
+        raw_end = tool_input.get("end")
+        if raw_end:
+            the_end = utils.parse_time(raw_end)
+            if the_end is None:
+                return {"error": f"невалідний кінець '{raw_end}', очікую HH:MM"}
 
-    item = await items.add_item(item_type, title, date=the_date, time=the_time)
+    item = await items.add_item(
+        item_type, title, date=the_date, time=the_time, end_time=the_end
+    )
 
     reminder_set = False
     if item_type == "event" and the_time is not None:
@@ -293,15 +306,20 @@ async def _create_recurrence(tool_input: dict) -> dict:
             if not isinstance(month, int) or not 1 <= month <= 12:
                 return {"error": "для yearly потрібен month 1..12"}
 
-    the_time = None
+    the_time = the_end = None
     if item_type == "event" and tool_input.get("time"):
         the_time = utils.parse_time(tool_input["time"])
         if the_time is None:
             return {"error": f"невалідний час '{tool_input['time']}', очікую HH:MM"}
+        if tool_input.get("end"):
+            the_end = utils.parse_time(tool_input["end"])
+            if the_end is None:
+                return {"error": f"невалідний кінець '{tool_input['end']}', очікую HH:MM"}
 
     rule_id = await recurrence.create_recurrence(
         item_type, title, freq,
-        weekdays=weekdays, month_day=month_day, month=month, time=the_time,
+        weekdays=weekdays, month_day=month_day, month=month,
+        time=the_time, end_time=the_end,
     )
     await recurrence.materialize_rule(rule_id)
     rule = await recurrence.get_recurrence(rule_id)
@@ -361,10 +379,13 @@ async def _system_prompt() -> str:
         "(«завтра», «у п'ятницю», «через тиждень») переводь у конкретну дату сам, "
         "спираючись на поточну. Після створення коротко підтвердь, що саме додав "
         "(назва, дата, час) і чи поставлено нагадування.\n"
-        "ПЕРЕД створенням події з часом виклич items_on(дата) і перевір накладки: "
-        "якщо вже є подія з близьким часом (у межах ~години) — попередь про це; "
-        "якщо день і так насичений — згадай. Прохання все одно виконуй, але додай "
-        "коротке попередження й, за потреби, запропонуй інший час.\n"
+        "У події є початок (time) і кінець (end). Подія займає інтервал [time, end]. "
+        "Якщо користувач назвав тривалість — порахуй end сам.\n"
+        "ПЕРЕД створенням події з часом виклич items_on(дата) і перевір накладки за "
+        "ІНТЕРВАЛАМИ: дві події конфліктують, якщо їхні проміжки [time, end] "
+        "перетинаються. Якщо є перетин — попередь про конкретну накладку; якщо день "
+        "насичений — згадай. Прохання все одно виконуй, але додай коротке "
+        "попередження й, за потреби, запропонуй інший час.\n"
         "Коли користувач описує регулярність («щовівторка», «по буднях», «щороку "
         "14 березня») — це розклад, виклич create_recurrence, а не create_item.\n"
         "Коли користувач просить закрити або видалити запис: знайди його через "

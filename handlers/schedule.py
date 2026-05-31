@@ -1,4 +1,6 @@
 """Хендлер «🔁 Розклад» — перегляд / створення / видалення правил повторення."""
+from datetime import date, datetime, timedelta
+
 import keyboards
 import utils
 from aiogram import F, Router
@@ -18,6 +20,7 @@ router = Router()
 
 WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
 HOUR_FROM, HOUR_TO = 8, 22
+DURATIONS = [(15, "15 хв"), (30, "30 хв"), (45, "45 хв"), (60, "1 год"), (90, "1.5 год"), (120, "2 год")]
 
 
 class Schedule(StatesGroup):
@@ -28,6 +31,7 @@ class Schedule(StatesGroup):
     yearly_date = State()
     event_hour = State()
     event_minute = State()
+    event_duration = State()
 
 
 # --- Клавіатури ----------------------------------------------------------
@@ -86,6 +90,15 @@ def _minute_kb() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def _duration_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"sdur:{m}") for m, label in DURATIONS[i : i + 3]]
+        for i in range(0, len(DURATIONS), 3)
+    ]
+    rows.append([InlineKeyboardButton(text="⏭ Без тривалості", callback_data="sdur:none")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # --- Перегляд списку -----------------------------------------------------
@@ -296,13 +309,36 @@ async def minute_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     minute = int(callback.data.split(":")[1])
     data = await state.get_data()
     await state.update_data(time=f"{int(data['hour']):02d}:{minute:02d}")
+    await state.set_state(Schedule.event_duration)
+    await callback.message.edit_text(
+        f"Скільки триватиме? (початок {int(data['hour']):02d}:{minute:02d})",
+        reply_markup=_duration_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(Schedule.event_duration, F.data == "sdur:none")
+async def duration_none(callback: CallbackQuery, state: FSMContext) -> None:
     await _finalize(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(Schedule.event_duration, F.data.startswith("sdur:"))
+async def duration_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    minutes = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    start = utils.parse_time(data["time"])
+    end = (datetime.combine(date.today(), start) + timedelta(minutes=minutes)).time()
+    await state.update_data(end=f"{end.hour:02d}:{end.minute:02d}")
+    await _finalize(callback.message, state)
+    await callback.answer()
 
 
 async def _finalize(target: Message, state: FSMContext) -> None:
     data = await state.get_data()
     weekdays = ",".join(str(i) for i in data["weekdays"]) if data.get("weekdays") else None
     the_time = utils.parse_time(data["time"]) if data.get("time") else None
+    the_end = utils.parse_time(data["end"]) if data.get("end") else None
     rule_id = await recurrence.create_recurrence(
         data["type"],
         data["title"],
@@ -311,6 +347,7 @@ async def _finalize(target: Message, state: FSMContext) -> None:
         month_day=data.get("month_day"),
         month=data.get("month"),
         time=the_time,
+        end_time=the_end,
     )
     await recurrence.materialize_rule(rule_id)
     rule = await recurrence.get_recurrence(rule_id)
