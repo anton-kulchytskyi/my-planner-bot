@@ -32,6 +32,15 @@ def _mark(item: Item) -> str:
     return "🔁 " if item.recurrence_id else ""
 
 
+def _time_prefix(item: Item) -> str:
+    """'10:00–11:00 — ' / '10:00 — ' / ''"""
+    if not item.time:
+        return ""
+    if item.end_time:
+        return f"{utils.fmt_time(item.time)}–{utils.fmt_time(item.end_time)} — "
+    return f"{utils.fmt_time(item.time)} — "
+
+
 def today_view(
     today: date,
     overdue: list[Item],
@@ -53,8 +62,7 @@ def today_view(
     if events:
         lines.append("📅 <b>Події:</b>")
         for item in events:
-            prefix = f"{utils.fmt_time(item.time)} — " if item.time else ""
-            lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}")
+            lines.append(f"• {_time_prefix(item)}{_mark(item)}{utils.esc(item.title)}")
         lines.append("")
 
     if tasks:
@@ -79,8 +87,7 @@ def upcoming_view(rows: list[Item]) -> View:
                 lines.append("")
             current = item.date
             lines.append(f"<b>{utils.human_date(item.date)}</b>")
-        timed = item.type == "event" and item.time
-        prefix = f"{utils.fmt_time(item.time)} — " if timed else ""
+        prefix = _time_prefix(item) if item.type == "event" else ""
         lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}")
 
     return View("\n".join(lines))

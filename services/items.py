@@ -12,9 +12,10 @@ async def add_item(
     title: str,
     date: date_ | None = None,
     time: time_ | None = None,
+    end_time: time_ | None = None,
 ) -> Item:
     async with async_session() as session:
-        item = Item(type=item_type, title=title, date=date, time=time)
+        item = Item(type=item_type, title=title, date=date, time=time, end_time=end_time)
         session.add(item)
         await session.commit()
         await session.refresh(item)

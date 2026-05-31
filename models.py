@@ -15,6 +15,7 @@ class Item(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     date: Mapped[date_ | None] = mapped_column(Date, nullable=True)
     time: Mapped[time_ | None] = mapped_column(Time, nullable=True)
+    end_time: Mapped[time_ | None] = mapped_column(Time, nullable=True)  # лише для подій
     done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=func.false())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -47,6 +48,7 @@ class Recurrence(Base):
     type: Mapped[str] = mapped_column(Text, nullable=False)  # 'task' | 'event'
     title: Mapped[str] = mapped_column(Text, nullable=False)
     time: Mapped[time_ | None] = mapped_column(Time, nullable=True)
+    end_time: Mapped[time_ | None] = mapped_column(Time, nullable=True)
 
     freq: Mapped[str] = mapped_column(Text, nullable=False)
     weekdays: Mapped[str | None] = mapped_column(Text, nullable=True)   # weekly: "0,2,4"

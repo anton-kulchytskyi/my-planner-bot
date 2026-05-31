@@ -68,6 +68,7 @@ async def _materialize_one(rule_id: int, today: date, until: date, tz) -> int:
                     title=rule.title,
                     date=day,
                     time=rule.time,
+                    end_time=rule.end_time,
                     recurrence_id=rule.id,
                 )
                 session.add(item)
@@ -120,6 +121,7 @@ async def create_recurrence(
     month_day: int | None = None,
     month: int | None = None,
     time=None,
+    end_time=None,
 ) -> int:
     today = await clock.today()
     async with async_session() as session:
@@ -131,6 +133,7 @@ async def create_recurrence(
             month_day=month_day,
             month=month,
             time=time,
+            end_time=end_time,
             start_date=today,
         )
         session.add(rule)
@@ -187,5 +190,10 @@ def _freq_phrase(rule: Recurrence) -> str:
 
 def describe(rule: Recurrence) -> str:
     icon = "📅" if rule.type == "event" else "📋"
-    at = f" о {rule.time.strftime('%H:%M')}" if rule.time else ""
+    if rule.time and rule.end_time:
+        at = f" {rule.time.strftime('%H:%M')}–{rule.end_time.strftime('%H:%M')}"
+    elif rule.time:
+        at = f" о {rule.time.strftime('%H:%M')}"
+    else:
+        at = ""
     return f"{icon} {rule.title} — {_freq_phrase(rule)}{at}"
