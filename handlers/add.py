@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 from keyboards import BTN_ADD
-from services import clock, items, scheduler
+from services import clock, conflicts, items, scheduler
 
 router = Router()
 
@@ -250,10 +250,21 @@ async def duration_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+def _conflict_warning(clashes: list) -> str:
+    if not clashes:
+        return ""
+    parts = []
+    for c in clashes:
+        rng = utils.fmt_time(c.time) + (f"–{utils.fmt_time(c.end_time)}" if c.end_time else "")
+        parts.append(f"{rng} {utils.esc(c.title)}")
+    return "\n⚠️ Накладка з: " + "; ".join(parts)
+
+
 async def _finalize_event(target: Message, state: FSMContext, end_time: time | None) -> None:
     data = await state.get_data()
     event_dt = date.fromisoformat(data["date"])
     start = utils.parse_time(data["time"])
+    clashes = await conflicts.find_conflicts(event_dt, start, end_time)
     item = await items.add_item(
         "event", data["title"], date=event_dt, time=start, end_time=end_time
     )
@@ -262,4 +273,5 @@ async def _finalize_event(target: Message, state: FSMContext, end_time: time | N
     span = utils.fmt_time(start) + (f"–{utils.fmt_time(end_time)}" if end_time else "")
     await target.edit_text(
         f"✅ Подія додана: {utils.esc(data['title'])} — {utils.fmt_date(event_dt)} {span}"
+        + _conflict_warning(clashes)
     )

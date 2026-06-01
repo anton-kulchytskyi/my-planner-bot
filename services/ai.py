@@ -14,7 +14,7 @@ from anthropic import AsyncAnthropic
 import config
 import utils
 from models import Item
-from services import clock, items, recurrence, scheduler
+from services import clock, conflicts, items, recurrence, scheduler
 
 logger = logging.getLogger("planner-bot")
 
@@ -186,6 +186,23 @@ TOOLS = [
             },
             "required": ["type", "title", "freq"],
         },
+    },
+    {
+        "name": "check_conflicts",
+        "description": (
+            "Детермінно перевіряє, чи нова подія [time, end] на дату накладається "
+            "на наявні події того дня. Викликай ПЕРЕД створенням події з часом і "
+            "переказуй результат (сам інтервали не рахуй). Повертає список накладок."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "YYYY-MM-DD"},
+                "time": {"type": "string", "description": "HH:MM початок"},
+                "end": {"type": "string", "description": "HH:MM кінець (опційно)"},
+            },
+            "required": ["date", "time"],
+        },
         "cache_control": {"type": "ephemeral"},
     },
 ]
@@ -326,6 +343,19 @@ async def _create_recurrence(tool_input: dict) -> dict:
     return {"created_recurrence": recurrence.describe(rule)}
 
 
+async def _check_conflicts(tool_input: dict) -> dict:
+    try:
+        day = date_cls.fromisoformat(tool_input.get("date", ""))
+    except (ValueError, TypeError):
+        return {"error": "невалідна дата, очікую YYYY-MM-DD"}
+    start = utils.parse_time(tool_input.get("time", ""))
+    if start is None:
+        return {"error": "невалідний час, очікую HH:MM"}
+    end = utils.parse_time(tool_input["end"]) if tool_input.get("end") else None
+    found = await conflicts.find_conflicts(day, start, end)
+    return {"conflicts": [_serialize(i) for i in found]}
+
+
 async def _run_tool(name: str, tool_input: dict) -> str:
     if name == "list_items":
         result = await _list_items(tool_input.get("scope", ""))
@@ -335,6 +365,8 @@ async def _run_tool(name: str, tool_input: dict) -> str:
         result = await _items_on(tool_input.get("date", ""))
     elif name == "create_recurrence":
         result = await _create_recurrence(tool_input)
+    elif name == "check_conflicts":
+        result = await _check_conflicts(tool_input)
     else:
         result = {"error": f"unknown tool: {name}"}
     return json.dumps(result, ensure_ascii=False)
@@ -379,12 +411,12 @@ async def _system_prompt() -> str:
         "(«завтра», «у п'ятницю», «через тиждень») переводь у конкретну дату сам, "
         "спираючись на поточну. Після створення коротко підтвердь, що саме додав "
         "(назва, дата, час) і чи поставлено нагадування.\n"
-        "У події є початок (time) і кінець (end). Подія займає інтервал [time, end]. "
-        "Якщо користувач назвав тривалість — порахуй end сам.\n"
-        "ПЕРЕД створенням події з часом виклич items_on(дата) і перевір накладки за "
-        "ІНТЕРВАЛАМИ: дві події конфліктують, якщо їхні проміжки [time, end] "
-        "перетинаються. Якщо є перетин — попередь про конкретну накладку; якщо день "
-        "насичений — згадай. Прохання все одно виконуй, але додай коротке "
+        "У події є початок (time) і кінець (end); якщо користувач назвав тривалість "
+        "— порахуй end сам.\n"
+        "ПЕРЕД створенням події з часом виклич check_conflicts(date, time, end) — "
+        "він детермінно перевіряє накладки (сам інтервали не рахуй). Якщо повертає "
+        "події — попередь про конкретну накладку (назва й час); день загалом можна "
+        "глянути через items_on. Прохання все одно виконуй, але додай коротке "
         "попередження й, за потреби, запропонуй інший час.\n"
         "Коли користувач описує регулярність («щовівторка», «по буднях», «щороку "
         "14 березня») — це розклад, виклич create_recurrence, а не create_item.\n"
