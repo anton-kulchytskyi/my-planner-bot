@@ -31,23 +31,35 @@
 ```
 planner-bot/
 ├── CLAUDE.md           ← цей файл
-├── TZ.md               ← технічне завдання
-├── main.py
-├── config.py
-├── database.py
-├── models.py
+├── TZ.md               ← технічне завдання (базовий обсяг; розклад/AI/end_time — поза ним)
+├── main.py             ← точка входу: middleware ALLOWED_USER_ID, /start, реєстрація роутерів, scheduler.setup
+├── config.py           ← env: BOT_TOKEN, ALLOWED_USER_ID, DATABASE_URL (→asyncpg), ANTHROPIC_API_KEY(опц.)
+├── database.py         ← async engine + async_sessionmaker + Base
+├── models.py           ← Item, Setting, Recurrence
+├── utils.py            ← парсинг/формат дат і часу, human_date, days_ago, esc (HTML)
+├── keyboards.py        ← reply-меню (3/2/2) + inline_column(buttons) з абстрактних Button
+├── views.py            ← ЧИСТИЙ рендер: today_view/upcoming_view/done_view → View(text, buttons); 🔁 і діапазон часу
 ├── handlers/
-│   ├── __init__.py
-│   ├── add.py
-│   ├── today.py
-│   ├── done.py
-│   ├── upcoming.py
-│   └── settings.py
+│   ├── __init__.py     ← setup_routers (порядок: фічі → ai catch-all останнім)
+│   ├── add.py          ← «Додати» FSM: тип→назва→дата(кнопки)→година→хвилини→тривалість
+│   ├── today.py        ← «Сьогодні» (+ callback tdone: відмітка простроченого)
+│   ├── done.py         ← «Виконано» (callback done:)
+│   ├── upcoming.py     ← «Найближче» (7 днів)
+│   ├── schedule.py     ← «🔁 Розклад» FSM: перегляд/створення/видалення правил
+│   ├── settings.py     ← «Налаштування»: час briefing (FSM)
+│   ├── help.py         ← «Допомога»
+│   └── ai.py           ← catch-all вільного тексту → AI; /reset; callback'и підтвердження дій
 ├── services/
-│   └── scheduler.py
-├── alembic/
-│   └── versions/
+│   ├── storage.py      ← settings (key-value) + типізовані: morning_time()/timezone()/set_morning_time()
+│   ├── clock.py        ← єдине джерело локального часу: now()/today()/year() (таймзона з storage)
+│   ├── items.py        ← CRUD/запити items (add_item, get_*, mark_done, delete_item, …)
+│   ├── recurrence.py   ← правила розкладу: expand + materialize (60 днів) + CRUD + describe
+│   ├── conflicts.py    ← детермінна find_conflicts (перетин інтервалів подій, без LLM)
+│   ├── scheduler.py    ← APScheduler: briefing(cron) + нагадування(1год до) + матеріалізація(cron 00:05)
+│   └── ai.py           ← Claude (Sonnet 4.6): агентний tool-use, історія, AgentReply
+├── alembic/versions/   ← 0001 initial · 0002 recurrences · 0003 event_end_time
 ├── alembic.ini
+├── entrypoint.sh       ← alembic upgrade head → python main.py
 ├── Dockerfile
 ├── .env.example
 └── requirements.txt
@@ -64,9 +76,9 @@ planner-bot/
 3. Railway автоматично деплоїть
 4. Перевіряємо в Telegram
 
-Локально нічого не піднімаємо. Міграції (`alembic upgrade head`) запускаються через Railway Console або як частина `CMD` у Dockerfile при необхідності.
+Локально нічого не піднімаємо (Python локально — лише Store-заглушка, не запускається). **Міграції застосовуються автоматично** через `entrypoint.sh` (`alembic upgrade head` перед стартом бота) — вручну нічого запускати не треба.
 
-**Тести не пишемо** — перевірка відбувається вручну через реальний бот після деплою.
+**Тести не пишемо** — перевірка відбувається вручну через реальний бот після деплою. Робочий цикл: пишемо код → коміт → `git push` → Railway авто-деплой → перевіряємо в Telegram. Після кожного кроку — звіт і очікування підтвердження.
 
 ---
 
@@ -88,12 +100,14 @@ planner-bot/
 
 ### Міграції
 - Alembic для всіх змін схеми БД
-- Нова фіча = нова міграція, не редагувати існуючі
-- `alembic upgrade head` запускати вручну через Railway Console після деплою з новою міграцією
+- Нова фіча зі зміною схеми = нова міграція, не редагувати існуючі
+- Накат **автоматичний** через `entrypoint.sh` на кожному деплої (нічого вручну)
+- Async `alembic/env.py` (asyncpg); `DATABASE_URL` нормалізується в `config.py`
 
 ### Dockerfile
 - `python:3.12-slim` base image
-- `CMD ["python", "main.py"]` — міграції не в CMD, запускати окремо
+- `CMD ["./entrypoint.sh"]` → міграції + `python main.py`
+- `.gitattributes` тримає `entrypoint.sh` у LF (щоб не зламався на Linux)
 
 ---
 
@@ -130,25 +144,47 @@ ANTHROPIC_API_KEY=   # опційно — AI-асистент
 
 ---
 
+## БД (схема)
+
+- **items**: id, type(task/event), title, date, time, **end_time**, done, created_at, **recurrence_id**(FK→recurrences, SET NULL)
+- **settings**: key, value (`morning_time`=08:00, `timezone`=Europe/Kyiv)
+- **recurrences**: id, type, title, time, end_time, freq(daily/weekly/monthly/yearly), weekdays("0,2,4", Пн=0…Нд=6), month_day, month, start_date, materialized_through, created_at
+
+---
+
 ## Поточний статус
 
-**Зараз:** усі кроки реалізовано (Кроки 1–7). Бот живий на Railway.
-- Крок 1: мінімальний бот + тестовий деплой
-- Крок 2: PostgreSQL, моделі, Alembic + авто-міграції (entrypoint.sh)
-- Крок 3: Reply-клавіатура + каркас хендлерів
-- Крок 4: флоу «Додати» (FSM) — кнопки дати (Сьогодні/Завтра/Інша), час година+хвилини
-- Крок 5: «Сьогодні» + «Найближче»
-- Крок 6: «Виконано»
-- Крок 7: Scheduler — ранковий briefing, нагадування за 1 год до події, «Налаштування»
+**Бот живий на Railway, повністю в робочому стані.** Базовий обсяг (ТЗ) + три великі надбудови:
 
-**AI-асистент (Sonnet 4.6):** вільний текст → `services/ai.py` (агентний tool-use:
-`list_items` / `items_on` / `create_item` / `create_recurrence` / `close_task` / `delete_item`).
-Створення — автономне зі зведенням; закриття/видалення — інлайн-підтвердження; перед подією
-з часом перевіряє накладки (`items_on`). Коротка in-memory історія + `/reset`.
-Опційний: без `ANTHROPIC_API_KEY` бот працює як раніше («не розумію»).
+**Базовий функціонал (Кроки 1–7):** клавіатура-меню; «Додати» (FSM: задача/подія, дати кнопками,
+час година→хвилини→**тривалість**); «Сьогодні» (прострочені з ✅, події, задачі); «Найближче» (7 днів);
+«Виконано»; «Налаштування» (час briefing); Scheduler (ранковий briefing cron + нагадування за 1 год до події).
 
-**Розклад (повторювані):** `services/recurrence.py` — правила (`recurrences`) розгортаються
-матеріалізацією у звичайні `items` на 60 днів уперед (щоденний job + догін при старті).
-Кнопка «🔁 Розклад» (FSM) і AI-tool `create_recurrence`. Повторювані позначені 🔁 у списках.
+**AI-асистент (Sonnet 4.6)** — `services/ai.py`. Вільний текст → агентний tool-use цикл.
+Інструменти: `list_items`, `items_on`, `check_conflicts`, `create_item`, `create_recurrence`,
+`close_task`, `delete_item`. Створення — автономне зі зведенням; закриття/видалення —
+інлайн-підтвердження (дія в `callback_data`). Коротка in-memory історія (10 повідомлень, TTL 30хв) + `/reset`.
+Опційний: без `ANTHROPIC_API_KEY` — старий fallback «не розумію».
 
-**Деплой:** push у GitHub → Railway авто-деплой. Міграції застосовуються автоматично через `entrypoint.sh` перед стартом бота.
+**Розклад / повторювані** — `services/recurrence.py`. Правила (`recurrences`) матеріалізуються у звичайні
+`items` на 60 днів уперед (cron 00:05 + догін при старті). Кнопка «🔁 Розклад» (FSM) і AI-tool `create_recurrence`.
+Повторювані позначені 🔁; видалення прибирає правило + майбутні входження + їх нагадування.
+
+**Час закінчення подій + антиконфлікт** — у події є `time`/`end_time` (інтервал). `services/conflicts.py`
+(`find_conflicts`) детермінно ловить накладки за перетином інтервалів: у кнопковому «Додати» — попередження
+без API; у агента — tool `check_conflicts` (модель не рахує сама).
+
+---
+
+## Ключові архітектурні рішення (контекст)
+
+- **Глибокі модулі після рефакторингу:** `views.py` — чистий рендер (текст+кнопки, без БД/aiogram);
+  `clock.py` — єдине джерело локального часу; `storage.py` — типізовані налаштування (парсинг сховано).
+- **Розклад = матеріалізація (варіант B):** правило → реальні рядки items, тож «Сьогодні»/«Найближче»/
+  нагадування працюють без змін. Матеріалізуємо лише ВПЕРЕД (не раніше сьогодні) → видалені входження не воскресають.
+- **Антиконфлікт детермінний** (не LLM): дешевше + точніше; служить і кнопкам, і агенту.
+- **In-memory:** FSM-стан і історія AI губляться при деплої/рестарті — прийнятно для single-user.
+- **Без циклів імпорту:** `scheduler` ↔ `recurrence`/`handlers.today` — через lazy-імпорти всередині функцій.
+
+**Можливе наступне:** моніторинг витрат на API (Sonnet); ідеї — редагування записів, гнучкіші нагадування,
+повторювані з кінцем дії. Деталі — у memory (`ai-cost-and-conflict-check`).
