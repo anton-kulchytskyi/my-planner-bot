@@ -32,6 +32,7 @@ class Schedule(StatesGroup):
     event_hour = State()
     event_minute = State()
     event_duration = State()
+    event_notify_end = State()  # питаємо лише коли є тривалість (end_time)
 
 
 # --- Клавіатури ----------------------------------------------------------
@@ -99,6 +100,17 @@ def _duration_kb() -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text="⏭ Без тривалості", callback_data="sdur:none")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _notify_end_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔔 Так", callback_data="snotend:1"),
+                InlineKeyboardButton(text="Ні", callback_data="snotend:0"),
+            ]
+        ]
+    )
 
 
 # --- Перегляд списку -----------------------------------------------------
@@ -330,6 +342,17 @@ async def duration_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     start = utils.parse_time(data["time"])
     end = (datetime.combine(date.today(), start) + timedelta(minutes=minutes)).time()
     await state.update_data(end=f"{end.hour:02d}:{end.minute:02d}")
+    await state.set_state(Schedule.event_notify_end)
+    await callback.message.edit_text(
+        f"🔔 Нагадувати за 15 хв до закінчення ({utils.fmt_time(end)})?",
+        reply_markup=_notify_end_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(Schedule.event_notify_end, F.data.startswith("snotend:"))
+async def notify_end_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(notify_end=callback.data.split(":")[1] == "1")
     await _finalize(callback.message, state)
     await callback.answer()
 
@@ -348,6 +371,7 @@ async def _finalize(target: Message, state: FSMContext) -> None:
         month=data.get("month"),
         time=the_time,
         end_time=the_end,
+        notify_end=bool(data.get("notify_end")) and the_end is not None,
     )
     await recurrence.materialize_rule(rule_id)
     rule = await recurrence.get_recurrence(rule_id)

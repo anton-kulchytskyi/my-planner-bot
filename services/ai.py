@@ -106,6 +106,8 @@ TOOLS = [
             "Для події з часом автоматично ставиться нагадування за годину.\n"
             "• end: 'HH:MM' — час закінчення події. Постав, якщо користувач назвав "
             "тривалість («годину» -> end = time+1:00) або кінець («до 16:00»).\n"
+            "• notify_end: true — нагадати за 15 хв ДО закінчення події (напр. «треба "
+            "забрати дитину з тренування»). Працює лише разом з end. За замовч. false.\n"
             "Якщо бракує назви або дати події — спершу перепитай користувача, "
             "не вигадуй."
         ),
@@ -117,6 +119,10 @@ TOOLS = [
                 "date": {"type": "string", "description": "YYYY-MM-DD"},
                 "time": {"type": "string", "description": "HH:MM (лише подія)"},
                 "end": {"type": "string", "description": "HH:MM кінець (лише подія)"},
+                "notify_end": {
+                    "type": "boolean",
+                    "description": "нагадати за 15 хв до закінчення (потребує end)",
+                },
             },
             "required": ["type", "title"],
         },
@@ -170,7 +176,9 @@ TOOLS = [
             "• weekdays: масив чисел для weekly (Пн=0 … Нд=6), напр. [1,3]\n"
             "• month_day: число 1–31 для monthly та yearly\n"
             "• month: 1–12 для yearly\n"
-            "• time: 'HH:MM', лише для події"
+            "• time: 'HH:MM', лише для події\n"
+            "• notify_end: true — нагадувати за 15 хв до закінчення кожного входження "
+            "(потребує end). За замовч. false."
         ),
         "input_schema": {
             "type": "object",
@@ -183,6 +191,10 @@ TOOLS = [
                 "month": {"type": "integer"},
                 "time": {"type": "string", "description": "HH:MM (лише подія)"},
                 "end": {"type": "string", "description": "HH:MM кінець (лише подія)"},
+                "notify_end": {
+                    "type": "boolean",
+                    "description": "нагадати за 15 хв до закінчення (потребує end)",
+                },
             },
             "required": ["type", "title", "freq"],
         },
@@ -216,6 +228,7 @@ def _serialize(item: Item) -> dict:
         "date": item.date.isoformat() if item.date else None,
         "time": item.time.strftime("%H:%M") if item.time else None,
         "end": item.end_time.strftime("%H:%M") if item.end_time else None,
+        "notify_end": item.notify_end,
         "done": item.done,
     }
 
@@ -272,8 +285,11 @@ async def _create_item(tool_input: dict) -> dict:
             if the_end is None:
                 return {"error": f"невалідний кінець '{raw_end}', очікую HH:MM"}
 
+    notify_end = bool(tool_input.get("notify_end")) and the_end is not None
+
     item = await items.add_item(
-        item_type, title, date=the_date, time=the_time, end_time=the_end
+        item_type, title, date=the_date, time=the_time,
+        end_time=the_end, notify_end=notify_end,
     )
 
     reminder_set = False
@@ -333,10 +349,12 @@ async def _create_recurrence(tool_input: dict) -> dict:
             if the_end is None:
                 return {"error": f"невалідний кінець '{tool_input['end']}', очікую HH:MM"}
 
+    notify_end = bool(tool_input.get("notify_end")) and the_end is not None
+
     rule_id = await recurrence.create_recurrence(
         item_type, title, freq,
         weekdays=weekdays, month_day=month_day, month=month,
-        time=the_time, end_time=the_end,
+        time=the_time, end_time=the_end, notify_end=notify_end,
     )
     await recurrence.materialize_rule(rule_id)
     rule = await recurrence.get_recurrence(rule_id)
@@ -412,7 +430,9 @@ async def _system_prompt() -> str:
         "спираючись на поточну. Після створення коротко підтвердь, що саме додав "
         "(назва, дата, час) і чи поставлено нагадування.\n"
         "У події є початок (time) і кінець (end); якщо користувач назвав тривалість "
-        "— порахуй end сам.\n"
+        "— порахуй end сам. Якщо користувач хоче нагадування про закінчення (напр. "
+        "«нагадай забрати дитину», «попередь перед кінцем») — постав notify_end=true "
+        "(нагадаю за 15 хв до end; потребує end).\n"
         "ПЕРЕД створенням події з часом виклич check_conflicts(date, time, end) — "
         "він детермінно перевіряє накладки (сам інтервали не рахуй). Якщо повертає "
         "події — попередь про конкретну накладку (назва й час); день загалом можна "

@@ -32,6 +32,7 @@ class Add(StatesGroup):
     event_hour = State()
     event_minute = State()
     event_duration = State()
+    event_notify_end = State()  # питаємо лише коли є тривалість (end_time)
 
 
 def _duration_keyboard() -> InlineKeyboardMarkup:
@@ -234,9 +235,20 @@ async def minute_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+def _notify_end_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔔 Так", callback_data="notend:1"),
+                InlineKeyboardButton(text="Ні", callback_data="notend:0"),
+            ]
+        ]
+    )
+
+
 @router.callback_query(Add.event_duration, F.data == "dur:none")
 async def duration_none(callback: CallbackQuery, state: FSMContext) -> None:
-    await _finalize_event(callback.message, state, end_time=None)
+    await _finalize_event(callback.message, state, end_time=None, notify_end=False)
     await callback.answer()
 
 
@@ -246,7 +258,21 @@ async def duration_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     start = utils.parse_time(data["time"])
     end = (datetime.combine(date.today(), start) + timedelta(minutes=minutes)).time()
-    await _finalize_event(callback.message, state, end_time=end)
+    await state.update_data(end_time=end.strftime("%H:%M"))
+    await state.set_state(Add.event_notify_end)
+    await callback.message.edit_text(
+        f"🔔 Нагадати за 15 хв до закінчення ({utils.fmt_time(end)})?",
+        reply_markup=_notify_end_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(Add.event_notify_end, F.data.startswith("notend:"))
+async def notify_end_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    notify_end = callback.data.split(":")[1] == "1"
+    data = await state.get_data()
+    end = utils.parse_time(data["end_time"])
+    await _finalize_event(callback.message, state, end_time=end, notify_end=notify_end)
     await callback.answer()
 
 
@@ -260,18 +286,22 @@ def _conflict_warning(clashes: list) -> str:
     return "\n⚠️ Накладка з: " + "; ".join(parts)
 
 
-async def _finalize_event(target: Message, state: FSMContext, end_time: time | None) -> None:
+async def _finalize_event(
+    target: Message, state: FSMContext, end_time: time | None, notify_end: bool = False
+) -> None:
     data = await state.get_data()
     event_dt = date.fromisoformat(data["date"])
     start = utils.parse_time(data["time"])
     clashes = await conflicts.find_conflicts(event_dt, start, end_time)
     item = await items.add_item(
-        "event", data["title"], date=event_dt, time=start, end_time=end_time
+        "event", data["title"], date=event_dt, time=start,
+        end_time=end_time, notify_end=notify_end,
     )
     await state.clear()
     await scheduler.schedule_reminder_for(item)
     span = utils.fmt_time(start) + (f"–{utils.fmt_time(end_time)}" if end_time else "")
+    bell = " 🔔" if notify_end else ""
     await target.edit_text(
-        f"✅ Подія додана: {utils.esc(data['title'])} — {utils.fmt_date(event_dt)} {span}"
+        f"✅ Подія додана: {utils.esc(data['title'])} — {utils.fmt_date(event_dt)} {span}{bell}"
         + _conflict_warning(clashes)
     )

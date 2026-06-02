@@ -55,9 +55,9 @@ planner-bot/
 │   ├── items.py        ← CRUD/запити items (add_item, get_*, mark_done, delete_item, …)
 │   ├── recurrence.py   ← правила розкладу: expand + materialize (60 днів) + CRUD + describe
 │   ├── conflicts.py    ← детермінна find_conflicts (перетин інтервалів подій, без LLM)
-│   ├── scheduler.py    ← APScheduler: briefing(cron) + нагадування(1год до) + матеріалізація(cron 00:05)
+│   ├── scheduler.py    ← APScheduler: briefing(cron) + нагадування(1год до старту + опц. 15хв до кінця) + матеріалізація(cron 00:05)
 │   └── ai.py           ← Claude (Sonnet 4.6): агентний tool-use, історія, AgentReply
-├── alembic/versions/   ← 0001 initial · 0002 recurrences · 0003 event_end_time
+├── alembic/versions/   ← 0001 initial · 0002 recurrences · 0003 event_end_time · 0004 notify_end
 ├── alembic.ini
 ├── entrypoint.sh       ← alembic upgrade head → python main.py
 ├── Dockerfile
@@ -146,9 +146,9 @@ ANTHROPIC_API_KEY=   # опційно — AI-асистент
 
 ## БД (схема)
 
-- **items**: id, type(task/event), title, date, time, **end_time**, done, created_at, **recurrence_id**(FK→recurrences, SET NULL)
+- **items**: id, type(task/event), title, date, time, **end_time**, **notify_end**(bool), done, created_at, **recurrence_id**(FK→recurrences, SET NULL)
 - **settings**: key, value (`morning_time`=08:00, `timezone`=Europe/Kyiv)
-- **recurrences**: id, type, title, time, end_time, freq(daily/weekly/monthly/yearly), weekdays("0,2,4", Пн=0…Нд=6), month_day, month, start_date, materialized_through, created_at
+- **recurrences**: id, type, title, time, end_time, **notify_end**(bool), freq(daily/weekly/monthly/yearly), weekdays("0,2,4", Пн=0…Нд=6), month_day, month, start_date, materialized_through, created_at
 
 ---
 
@@ -173,6 +173,12 @@ ANTHROPIC_API_KEY=   # опційно — AI-асистент
 **Час закінчення подій + антиконфлікт** — у події є `time`/`end_time` (інтервал). `services/conflicts.py`
 (`find_conflicts`) детермінно ловить накладки за перетином інтервалів: у кнопковому «Додати» — попередження
 без API; у агента — tool `check_conflicts` (модель не рахує сама).
+
+**Нагадування про закінчення події** — опційний прапорець `notify_end` (events і recurrences). Якщо ввімкнено
+й є `end_time` — додаткове нагадування за фікс. `END_REMINDER_MIN`=15 хв до кінця (job `endreminder:{id}` поряд з
+`reminder:{id}`). Прапорець доступний у кнопкових флоу «Додати» й «🔁 Розклад» (крок Так/Ні лише коли обрано
+тривалість) та через AI (`notify_end` у `create_item`/`create_recurrence`, вмикається лише разом з `end`).
+Позначка 🔔 у «Сьогодні»/«Найближче» і в описі правил. Кейс: забрати дитину з тренування.
 
 ---
 

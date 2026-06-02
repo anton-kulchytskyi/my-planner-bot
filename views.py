@@ -32,6 +32,11 @@ def _mark(item: Item) -> str:
     return "🔁 " if item.recurrence_id else ""
 
 
+def _end_bell(item: Item) -> str:
+    """ 🔔 — якщо для події ввімкнено нагадування про закінчення."""
+    return " 🔔" if item.notify_end else ""
+
+
 def _time_prefix(item: Item) -> str:
     """'10:00–11:00 — ' / '10:00 — ' / ''"""
     if not item.time:
@@ -62,7 +67,7 @@ def today_view(
     if events:
         lines.append("📅 <b>Події:</b>")
         for item in events:
-            lines.append(f"• {_time_prefix(item)}{_mark(item)}{utils.esc(item.title)}")
+            lines.append(f"• {_time_prefix(item)}{_mark(item)}{utils.esc(item.title)}{_end_bell(item)}")
         lines.append("")
 
     if tasks:
@@ -88,7 +93,8 @@ def upcoming_view(rows: list[Item]) -> View:
             current = item.date
             lines.append(f"<b>{utils.human_date(item.date)}</b>")
         prefix = _time_prefix(item) if item.type == "event" else ""
-        lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}")
+        bell = _end_bell(item) if item.type == "event" else ""
+        lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}{bell}")
 
     return View("\n".join(lines))
 

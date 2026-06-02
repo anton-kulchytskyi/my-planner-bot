@@ -19,6 +19,7 @@ scheduler = AsyncIOScheduler()
 _bot: Bot | None = None
 
 BRIEFING_JOB_ID = "briefing"
+END_REMINDER_MIN = 15  # за скільки хв до закінчення події нагадувати (якщо ввімкнено)
 
 
 # --- Briefing ------------------------------------------------------------
@@ -54,6 +55,13 @@ async def _send_reminder(title: str, time_str: str) -> None:
     )
 
 
+async def _send_end_reminder(title: str, end_str: str) -> None:
+    await _bot.send_message(
+        config.ALLOWED_USER_ID,
+        f"🔔 Через {END_REMINDER_MIN} хв закінчиться — {utils.esc(title)} (до {end_str})",
+    )
+
+
 def schedule_event_reminder(item: Item, tz: ZoneInfo) -> None:
     """Ставить нагадування за 1 годину до події (якщо час іще не минув)."""
     if item.time is None or item.date is None:
@@ -71,16 +79,35 @@ def schedule_event_reminder(item: Item, tz: ZoneInfo) -> None:
     )
 
 
+def schedule_end_reminder(item: Item, tz: ZoneInfo) -> None:
+    """Ставить нагадування за END_REMINDER_MIN хв до закінчення (якщо ввімкнено)."""
+    if not item.notify_end or item.end_time is None or item.date is None:
+        return
+    end_dt = datetime.combine(item.date, item.end_time, tzinfo=tz)
+    remind_at = end_dt - timedelta(minutes=END_REMINDER_MIN)
+    if remind_at <= datetime.now(tz):
+        return
+    scheduler.add_job(
+        _send_end_reminder,
+        DateTrigger(run_date=remind_at),
+        args=[item.title, utils.fmt_time(item.end_time)],
+        id=f"endreminder:{item.id}",
+        replace_existing=True,
+    )
+
+
 async def schedule_reminder_for(item: Item) -> None:
     """Зручна обгортка для виклику з хендлера створення події."""
-    schedule_event_reminder(item, await storage.timezone())
+    tz = await storage.timezone()
+    schedule_event_reminder(item, tz)
+    schedule_end_reminder(item, tz)
 
 
 def cancel_reminder(item_id: int) -> None:
-    """Прибирає нагадування (напр. коли подію видалили)."""
-    job_id = f"reminder:{item_id}"
-    if scheduler.get_job(job_id):
-        scheduler.remove_job(job_id)
+    """Прибирає нагадування події (напр. коли подію видалили) — обидва типи."""
+    for job_id in (f"reminder:{item_id}", f"endreminder:{item_id}"):
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
 
 
 # --- Старт ---------------------------------------------------------------
@@ -107,6 +134,7 @@ async def setup(bot: Bot) -> None:
     today = await clock.today()
     for event in await items.get_events_with_time_from(today):
         schedule_event_reminder(event, tz)
+        schedule_end_reminder(event, tz)
 
     scheduler.start()
     logger.info("Scheduler запущено")

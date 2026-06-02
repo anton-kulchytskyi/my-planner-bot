@@ -69,6 +69,7 @@ async def _materialize_one(rule_id: int, today: date, until: date, tz) -> int:
                     date=day,
                     time=rule.time,
                     end_time=rule.end_time,
+                    notify_end=rule.notify_end,
                     recurrence_id=rule.id,
                 )
                 session.add(item)
@@ -81,6 +82,7 @@ async def _materialize_one(rule_id: int, today: date, until: date, tz) -> int:
         for item in created:
             if item.type == "event" and item.time is not None:
                 scheduler.schedule_event_reminder(item, tz)
+                scheduler.schedule_end_reminder(item, tz)
 
     if created:
         logger.info("Розклад #%s: матеріалізовано %d входжень", rule_id, len(created))
@@ -122,6 +124,7 @@ async def create_recurrence(
     month: int | None = None,
     time=None,
     end_time=None,
+    notify_end: bool = False,
 ) -> int:
     today = await clock.today()
     async with async_session() as session:
@@ -134,6 +137,7 @@ async def create_recurrence(
             month=month,
             time=time,
             end_time=end_time,
+            notify_end=notify_end,
             start_date=today,
         )
         session.add(rule)
@@ -196,4 +200,5 @@ def describe(rule: Recurrence) -> str:
         at = f" о {rule.time.strftime('%H:%M')}"
     else:
         at = ""
-    return f"{icon} {rule.title} — {_freq_phrase(rule)}{at}"
+    bell = " 🔔" if rule.notify_end else ""
+    return f"{icon} {rule.title} — {_freq_phrase(rule)}{at}{bell}"

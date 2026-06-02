@@ -13,9 +13,13 @@ async def add_item(
     date: date_ | None = None,
     time: time_ | None = None,
     end_time: time_ | None = None,
+    notify_end: bool = False,
 ) -> Item:
     async with async_session() as session:
-        item = Item(type=item_type, title=title, date=date, time=time, end_time=end_time)
+        item = Item(
+            type=item_type, title=title, date=date, time=time,
+            end_time=end_time, notify_end=notify_end,
+        )
         session.add(item)
         await session.commit()
         await session.refresh(item)
