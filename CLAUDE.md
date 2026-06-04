@@ -55,7 +55,7 @@ planner-bot/
 │   ├── items.py        ← CRUD/запити items (add_item, get_*, mark_done, delete_item, …)
 │   ├── recurrence.py   ← правила розкладу: expand + materialize (60 днів) + CRUD + describe
 │   ├── conflicts.py    ← детермінна find_conflicts (перетин інтервалів подій, без LLM)
-│   ├── scheduler.py    ← APScheduler: briefing(cron) + нагадування(1год до старту + опц. 15хв до кінця) + матеріалізація(cron 00:05)
+│   ├── scheduler.py    ← APScheduler: briefing(cron) + нагадування(1год до старту + опц. 15хв до кінця) + матеріалізація(cron 00:05) + авточистка(cron 00:10)
 │   └── ai.py           ← Claude (Sonnet 4.6): агентний tool-use, історія, AgentReply
 ├── alembic/versions/   ← 0001 initial · 0002 recurrences · 0003 event_end_time · 0004 notify_end
 ├── alembic.ini
@@ -179,6 +179,14 @@ ANTHROPIC_API_KEY=   # опційно — AI-асистент
 `reminder:{id}`). Прапорець доступний у кнопкових флоу «Додати» й «🔁 Розклад» (крок Так/Ні лише коли обрано
 тривалість) та через AI (`notify_end` у `create_item`/`create_recurrence`, вмикається лише разом з `end`).
 Позначка 🔔 у «Сьогодні»/«Найближче» і в описі правил. Кейс: забрати дитину з тренування.
+
+---
+
+**Авточистка БД** — `items.cleanup_old(cutoff)` + job у scheduler (cron 00:10 + догін при старті).
+Видаляє завершене/минуле старше за `RETENTION_DAYS`=14 днів: минулі події та виконані задачі (з датою
+в минулому або без дати — за `created_at`). **Невиконані задачі не чіпаються** (борг). Безпечно: матеріалізація
+йде лише вперед, тож видалені минулі входження не воскресають. Беклог (задачі без дати) — окрема секція
+«📥 Беклог» у «Найближче» і ранковому briefing (`today_view`/`upcoming_view`, `items.get_backlog()`).
 
 ---
 

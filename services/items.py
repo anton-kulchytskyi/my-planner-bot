@@ -1,7 +1,7 @@
 """Операції з таблицею items."""
 from datetime import date as date_, time as time_
 
-from sqlalchemy import and_, nulls_last, or_, select
+from sqlalchemy import and_, delete, func, nulls_last, or_, select
 
 from database import async_session
 from models import Item
@@ -137,6 +137,45 @@ async def mark_done(item_id: int) -> bool:
         item.done = True
         await session.commit()
         return True
+
+
+async def cleanup_old(cutoff: date_) -> int:
+    """Авточистка: видаляє завершені/минулі записи з датою до `cutoff`.
+
+    Прибираємо: минулі події; виконані задачі (з датою в минулому або
+    без дати — тоді за `created_at`). Невиконані задачі НЕ чіпаємо —
+    це борг, висить у «Прострочено» поки сам не закриєш/видалиш.
+    Повертає кількість видалених рядків.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Item).where(
+                or_(
+                    # минулі події
+                    and_(
+                        Item.type == "event",
+                        Item.date.is_not(None),
+                        Item.date < cutoff,
+                    ),
+                    # виконані задачі з датою в минулому
+                    and_(
+                        Item.type == "task",
+                        Item.done.is_(True),
+                        Item.date.is_not(None),
+                        Item.date < cutoff,
+                    ),
+                    # виконані задачі без дати — за датою створення
+                    and_(
+                        Item.type == "task",
+                        Item.done.is_(True),
+                        Item.date.is_(None),
+                        func.date(Item.created_at) < cutoff,
+                    ),
+                )
+            )
+        )
+        await session.commit()
+        return result.rowcount or 0
 
 
 async def delete_item(item_id: int) -> bool:

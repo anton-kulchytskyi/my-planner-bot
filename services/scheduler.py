@@ -20,6 +20,7 @@ _bot: Bot | None = None
 
 BRIEFING_JOB_ID = "briefing"
 END_REMINDER_MIN = 15  # за скільки хв до закінчення події нагадувати (якщо ввімкнено)
+RETENTION_DAYS = 14  # старші за стільки днів завершені/минулі записи — авточистка
 
 
 # --- Briefing ------------------------------------------------------------
@@ -110,6 +111,16 @@ def cancel_reminder(item_id: int) -> None:
             scheduler.remove_job(job_id)
 
 
+# --- Авточистка старих записів -------------------------------------------
+
+async def _cleanup_old() -> None:
+    today = await clock.today()
+    cutoff = today - timedelta(days=RETENTION_DAYS)
+    deleted = await items.cleanup_old(cutoff)
+    if deleted:
+        logger.info("Авточистка: видалено %d старих записів (до %s)", deleted, cutoff)
+
+
 # --- Старт ---------------------------------------------------------------
 
 async def setup(bot: Bot) -> None:
@@ -127,6 +138,15 @@ async def setup(bot: Bot) -> None:
         recurrence.materialize_all,
         CronTrigger(hour=0, minute=5, timezone=tz),
         id="materialize",
+        replace_existing=True,
+    )
+
+    # Авточистка: догін при старті + щоденний job (після матеріалізації)
+    await _cleanup_old()
+    scheduler.add_job(
+        _cleanup_old,
+        CronTrigger(hour=0, minute=10, timezone=tz),
+        id="cleanup",
         replace_existing=True,
     )
 
