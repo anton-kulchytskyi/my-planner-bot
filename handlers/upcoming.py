@@ -15,7 +15,8 @@ router = Router()
 async def build_upcoming() -> views.View:
     today = await clock.today()
     rows = await items.get_upcoming(today + timedelta(days=1), today + timedelta(days=7))
-    return views.upcoming_view(rows)
+    backlog = await items.get_backlog()
+    return views.upcoming_view(rows, backlog)
 
 
 @router.message(Command("upcoming"))

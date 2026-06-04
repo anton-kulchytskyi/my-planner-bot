@@ -46,13 +46,26 @@ def _time_prefix(item: Item) -> str:
     return f"{utils.fmt_time(item.time)} — "
 
 
+def _backlog_lines(backlog: list[Item]) -> list[str]:
+    """Секція беклогу (задачі без дати) або [] якщо порожньо."""
+    if not backlog:
+        return []
+    lines = ["📥 <b>Беклог (без дати):</b>"]
+    for item in backlog:
+        lines.append(f"• {_mark(item)}{utils.esc(item.title)}")
+    lines.append("")
+    return lines
+
+
 def today_view(
     today: date,
     overdue: list[Item],
     events: list[Item],
     tasks: list[Item],
+    backlog: list[Item] | None = None,
 ) -> View:
-    if not (overdue or events or tasks):
+    backlog = backlog or []
+    if not (overdue or events or tasks or backlog):
         return View(TODAY_EMPTY)
 
     lines = [f"☀️ <b>Сьогодні, {utils.human_date(today)}</b>", ""]
@@ -76,12 +89,15 @@ def today_view(
             lines.append(f"• {_mark(item)}{utils.esc(item.title)}")
         lines.append("")
 
+    lines += _backlog_lines(backlog)
+
     buttons = [Button(f"✅ {item.title[:30]}", f"tdone:{item.id}") for item in overdue]
     return View("\n".join(lines).strip(), buttons)
 
 
-def upcoming_view(rows: list[Item]) -> View:
-    if not rows:
+def upcoming_view(rows: list[Item], backlog: list[Item] | None = None) -> View:
+    backlog = backlog or []
+    if not (rows or backlog):
         return View(UPCOMING_EMPTY)
 
     lines = ["📅 <b>Найближчі 7 днів</b>", ""]
@@ -96,7 +112,12 @@ def upcoming_view(rows: list[Item]) -> View:
         bell = _end_bell(item) if item.type == "event" else ""
         lines.append(f"• {prefix}{_mark(item)}{utils.esc(item.title)}{bell}")
 
-    return View("\n".join(lines))
+    if backlog:
+        if rows:
+            lines.append("")
+        lines += _backlog_lines(backlog)
+
+    return View("\n".join(lines).strip())
 
 
 def done_view(tasks: list[Item]) -> View:

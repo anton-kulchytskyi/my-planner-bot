@@ -27,7 +27,7 @@ END_REMINDER_MIN = 15  # за скільки хв до закінчення по
 async def _send_briefing() -> None:
     from handlers.today import build_today  # lazy — уникаємо циклічного імпорту
 
-    view = await build_today()
+    view = await build_today(include_backlog=True)
     await _bot.send_message(
         config.ALLOWED_USER_ID, view.text, reply_markup=keyboards.inline_column(view.buttons)
     )

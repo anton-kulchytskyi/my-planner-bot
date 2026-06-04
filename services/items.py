@@ -81,6 +81,21 @@ async def get_upcoming(start: date_, end: date_) -> list[Item]:
         return list(result.scalars().all())
 
 
+async def get_backlog() -> list[Item]:
+    """Невиконані задачі без дати — беклог."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Item)
+            .where(
+                Item.type == "task",
+                Item.done.is_(False),
+                Item.date.is_(None),
+            )
+            .order_by(Item.id)
+        )
+        return list(result.scalars().all())
+
+
 async def get_open_tasks(today: date_) -> list[Item]:
     """Незавершені задачі на сьогодні або без дати."""
     async with async_session() as session:

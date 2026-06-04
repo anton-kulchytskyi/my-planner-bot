@@ -10,14 +10,19 @@ from services import clock, items
 router = Router()
 
 
-async def build_today() -> views.View:
-    """Збирає дані за сьогодні й рендерить (використовується і в briefing)."""
+async def build_today(include_backlog: bool = False) -> views.View:
+    """Збирає дані за сьогодні й рендерить (використовується і в briefing).
+
+    include_backlog=True (briefing) додає секцію задач без дати; кнопка
+    «Сьогодні» лишається чистою (беклог дивимось у «Найближче»).
+    """
     today = await clock.today()
     return views.today_view(
         today,
         overdue=await items.get_overdue_tasks(today),
         events=await items.get_events_on(today),
         tasks=await items.get_tasks_on(today),
+        backlog=await items.get_backlog() if include_backlog else None,
     )
 
 
