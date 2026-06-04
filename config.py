@@ -26,3 +26,10 @@ DATABASE_URL_ASYNC: str = _normalize_db_url(DATABASE_URL)
 
 # Опційно: без ключа AI-асистент вимкнений, бот працює як раніше.
 ANTHROPIC_API_KEY: str | None = os.environ.get("ANTHROPIC_API_KEY")
+
+# Авточистка: старші за стільки днів завершені/минулі записи видаляються.
+# Можна змінити на Railway без редагування коду (за замовчуванням 14).
+RETENTION_DAYS: int = int(os.environ.get("RETENTION_DAYS", "14"))
+
+# За скільки хвилин до закінчення події слати нагадування (якщо ввімкнено notify_end).
+END_REMINDER_MIN: int = int(os.environ.get("END_REMINDER_MIN", "15"))

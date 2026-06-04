@@ -19,8 +19,6 @@ scheduler = AsyncIOScheduler()
 _bot: Bot | None = None
 
 BRIEFING_JOB_ID = "briefing"
-END_REMINDER_MIN = 15  # за скільки хв до закінчення події нагадувати (якщо ввімкнено)
-RETENTION_DAYS = 14  # старші за стільки днів завершені/минулі записи — авточистка
 
 
 # --- Briefing ------------------------------------------------------------
@@ -59,7 +57,7 @@ async def _send_reminder(title: str, time_str: str) -> None:
 async def _send_end_reminder(title: str, end_str: str) -> None:
     await _bot.send_message(
         config.ALLOWED_USER_ID,
-        f"🔔 Через {END_REMINDER_MIN} хв закінчиться — {utils.esc(title)} (до {end_str})",
+        f"🔔 Через {config.END_REMINDER_MIN} хв закінчиться — {utils.esc(title)} (до {end_str})",
     )
 
 
@@ -81,11 +79,11 @@ def schedule_event_reminder(item: Item, tz: ZoneInfo) -> None:
 
 
 def schedule_end_reminder(item: Item, tz: ZoneInfo) -> None:
-    """Ставить нагадування за END_REMINDER_MIN хв до закінчення (якщо ввімкнено)."""
+    """Ставить нагадування за config.END_REMINDER_MIN хв до закінчення (якщо ввімкнено)."""
     if not item.notify_end or item.end_time is None or item.date is None:
         return
     end_dt = datetime.combine(item.date, item.end_time, tzinfo=tz)
-    remind_at = end_dt - timedelta(minutes=END_REMINDER_MIN)
+    remind_at = end_dt - timedelta(minutes=config.END_REMINDER_MIN)
     if remind_at <= datetime.now(tz):
         return
     scheduler.add_job(
@@ -115,7 +113,7 @@ def cancel_reminder(item_id: int) -> None:
 
 async def _cleanup_old() -> None:
     today = await clock.today()
-    cutoff = today - timedelta(days=RETENTION_DAYS)
+    cutoff = today - timedelta(days=config.RETENTION_DAYS)
     deleted = await items.cleanup_old(cutoff)
     if deleted:
         logger.info("Авточистка: видалено %d старих записів (до %s)", deleted, cutoff)
