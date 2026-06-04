@@ -70,8 +70,8 @@ async def free_text(message: Message) -> None:
         )
         return
 
-    # Вільний текст моделі — плейн-текстом, щоб markdown/символи не ламали HTML
-    await message.answer(reply.text or "…", parse_mode=None)
+    # Вільний текст моделі: легкий Markdown → HTML (екранує спецсимволи)
+    await message.answer(utils.md_to_html(reply.text) if reply.text else "…")
 
 
 @router.callback_query(F.data.startswith("aiconfirm:"))

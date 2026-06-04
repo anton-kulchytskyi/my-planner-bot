@@ -1,4 +1,5 @@
 """Допоміжні функції: парсинг/форматування дат і часу, текст."""
+import re
 from datetime import date, datetime, time
 from html import escape
 
@@ -6,6 +7,25 @@ from html import escape
 def esc(value: str) -> str:
     """Екранує текст для HTML parse_mode."""
     return escape(value)
+
+
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_MD_ITALIC = re.compile(r"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])", re.DOTALL)
+_MD_BULLET = re.compile(r"(?m)^[ \t]*-[ \t]+")
+
+
+def md_to_html(value: str) -> str:
+    """Легкий Markdown від AI → Telegram-HTML.
+
+    Модель часом форматує відповідь Markdown'ом (**жирний**, списки «- »),
+    а Telegram у HTML parse_mode показав би зірочки буквально. Екрануємо
+    спецсимволи й конвертуємо базову розмітку: **жирний**, *курсив*, «- » → «• ».
+    """
+    value = escape(value)
+    value = _MD_BOLD.sub(r"<b>\1</b>", value)
+    value = _MD_ITALIC.sub(r"<i>\1</i>", value)
+    value = _MD_BULLET.sub("• ", value)
+    return value
 
 
 def parse_date(value: str, *, default_year: int) -> date | None:
