@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 import utils
-from models import Item
+from models import Item, ShoppingItem
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class View:
 TODAY_EMPTY = "Сьогодні нічого не заплановано 🎉"
 UPCOMING_EMPTY = "На найближчі 7 днів нічого не заплановано 🎉"
 DONE_EMPTY = "Немає незавершених задач 🎉"
+SHOPPING_EMPTY = "🛒 Список покупок порожній"
 
 
 def _mark(item: Item) -> str:
@@ -125,3 +126,15 @@ def done_view(tasks: list[Item]) -> View:
         return View(DONE_EMPTY)
     buttons = [Button(f"☑️ {task.title[:40]}", f"done:{task.id}") for task in tasks]
     return View("✅ <b>Незавершені задачі</b>\nТапни, щоб закрити:", buttons)
+
+
+def shopping_view(items: list[ShoppingItem]) -> View:
+    """Список покупок: тап по позиції = видалити («купив»)."""
+    add = Button("➕ Додати", "shop_add")
+    if not items:
+        return View(SHOPPING_EMPTY, [add])
+    buttons = [Button(f"🛒 {it.title[:40]}", f"shop_del:{it.id}") for it in items]
+    buttons.append(add)
+    buttons.append(Button("🗑 Очистити все", "shop_clear"))
+    text = "🛒 <b>Список покупок</b>\nТапни позицію, щоб прибрати:"
+    return View(text, buttons)

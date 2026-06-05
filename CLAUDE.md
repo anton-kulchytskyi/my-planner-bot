@@ -46,6 +46,7 @@ planner-bot/
 │   ├── done.py         ← «Виконано» (callback done:)
 │   ├── upcoming.py     ← «Найближче» (7 днів)
 │   ├── schedule.py     ← «🔁 Розклад» FSM: перегляд/створення/видалення правил
+│   ├── shopping.py     ← «🛒 Покупки» окремий список: показ/додати(FSM)/тап-видалити/очистити все
 │   ├── settings.py     ← «Налаштування»: час briefing (FSM)
 │   ├── help.py         ← «Допомога»
 │   └── ai.py           ← catch-all вільного тексту → AI; /reset; callback'и підтвердження дій
@@ -54,10 +55,11 @@ planner-bot/
 │   ├── clock.py        ← єдине джерело локального часу: now()/today()/year() (таймзона з storage)
 │   ├── items.py        ← CRUD/запити items (add_item, get_*, mark_done, delete_item, …)
 │   ├── recurrence.py   ← правила розкладу: expand + materialize (60 днів) + CRUD + describe
+│   ├── shopping.py     ← CRUD списку покупок (add_items/get_all/delete_item/clear_all), окрема таблиця
 │   ├── conflicts.py    ← детермінна find_conflicts (перетин інтервалів подій, без LLM)
 │   ├── scheduler.py    ← APScheduler: briefing(cron) + нагадування(1год до старту + опц. 15хв до кінця) + матеріалізація(cron 00:05) + авточистка(cron 00:10)
 │   └── ai.py           ← Claude (Sonnet 4.6): агентний tool-use, історія, AgentReply
-├── alembic/versions/   ← 0001 initial · 0002 recurrences · 0003 event_end_time · 0004 notify_end
+├── alembic/versions/   ← 0001 initial · 0002 recurrences · 0003 event_end_time · 0004 notify_end · 0005 shopping
 ├── alembic.ini
 ├── entrypoint.sh       ← alembic upgrade head → python main.py
 ├── Dockerfile
@@ -150,6 +152,7 @@ END_REMINDER_MIN=15  # опційно — за скільки хв до кінц
 
 - **items**: id, type(task/event), title, date, time, **end_time**, **notify_end**(bool), done, created_at, **recurrence_id**(FK→recurrences, SET NULL)
 - **settings**: key, value (`morning_time`=08:00, `timezone`=Europe/Kyiv)
+- **shopping_items**: id, title, created_at (окремий список покупок; не зберігається в історії, не чіпається авточисткою)
 - **recurrences**: id, type, title, time, end_time, **notify_end**(bool), freq(daily/weekly/monthly/yearly), weekdays("0,2,4", Пн=0…Нд=6), month_day, month, start_date, materialized_through, created_at
 
 ---
@@ -189,6 +192,14 @@ END_REMINDER_MIN=15  # опційно — за скільки хв до кінц
 в минулому або без дати — за `created_at`). **Невиконані задачі не чіпаються** (борг). Безпечно: матеріалізація
 йде лише вперед, тож видалені минулі входження не воскресають. Беклог (задачі без дати) — окрема секція
 «📥 Беклог» у «Найближче» і ранковому briefing (`today_view`/`upcoming_view`, `items.get_backlog()`).
+
+---
+
+**Список покупок** — `services/shopping.py` + окрема таблиця `shopping_items`. Кнопка «🛒 Покупки»
+(`handlers/shopping.py`): показ списку, «➕ Додати» (FSM, кілька позицій за раз через кому/новий рядок),
+тап по позиції = одразу видалити («купив»), «🗑 Очистити все». Свідомо ОКРЕМО від `items`: без дат/done,
+не потрапляє в briefing/«Сьогодні»/«Найближче», не чіпається авточисткою, без AI-інструментів. Кейс:
+складав пару днів → у магазині дістав → перевірив → купив → видалив.
 
 ---
 

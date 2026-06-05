@@ -28,6 +28,18 @@ class Item(Base):
     )
 
 
+class ShoppingItem(Base):
+    """Позиція списку покупок. Окремо від items: без дат, без done,
+    не зберігається в історії — додав, купив, видалив."""
+    __tablename__ = "shopping_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

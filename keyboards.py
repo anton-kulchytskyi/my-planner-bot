@@ -13,6 +13,7 @@ BTN_ADD = "➕ Додати"
 BTN_DONE = "✅ Виконано"
 BTN_UPCOMING = "📅 Найближче"
 BTN_SCHEDULE = "🔁 Розклад"
+BTN_SHOPPING = "🛒 Покупки"
 BTN_SETTINGS = "⚙️ Налаштування"
 BTN_HELP = "❓ Допомога"
 
@@ -25,7 +26,11 @@ def main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=BTN_UPCOMING),
                 KeyboardButton(text=BTN_SCHEDULE),
             ],
-            [KeyboardButton(text=BTN_ADD), KeyboardButton(text=BTN_DONE)],
+            [
+                KeyboardButton(text=BTN_ADD),
+                KeyboardButton(text=BTN_DONE),
+                KeyboardButton(text=BTN_SHOPPING),
+            ],
             [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
